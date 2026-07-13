@@ -20,10 +20,10 @@ function makeHook(overrides = {}) {
   } as any
 }
 
-function renderView(hook = makeHook(), onSignOut = vi.fn().mockResolvedValue(undefined)) {
+function renderView(hook = makeHook(), onSignOut = vi.fn().mockResolvedValue(undefined), userEmail = 'test@example.com') {
   return render(
     <ToastProvider>
-      <TasksView tasksHook={hook} onSignOut={onSignOut} />
+      <TasksView tasksHook={hook} onSignOut={onSignOut} userEmail={userEmail} />
     </ToastProvider>
   )
 }
@@ -32,6 +32,16 @@ describe('TasksView', () => {
   it('shows the empty state when there are no tasks', () => {
     renderView()
     expect(screen.getByText(strings.tasks.emptyAll)).toBeInTheDocument()
+  })
+
+  it('shows the signed-in user email as the heading', () => {
+    renderView(makeHook(), vi.fn(), 'dimsxm@gmail.com')
+    expect(screen.getByText('dimsxm@gmail.com')).toBeInTheDocument()
+  })
+
+  it('falls back to the generic heading when there is no user email', () => {
+    renderView(makeHook(), vi.fn(), null as any)
+    expect(screen.getByText(strings.tasks.heading)).toBeInTheDocument()
   })
 
   it('calls onSignOut and shows a farewell toast when sign-out clicked', async () => {

@@ -12,7 +12,22 @@ import { EmptyState } from './EmptyState'
 
 type TasksHook = ReturnType<typeof useTasks>
 
-export function TasksView({ tasksHook, onSignOut }: { tasksHook: TasksHook; onSignOut: () => Promise<void> }) {
+const todayLabel = new Intl.DateTimeFormat('fr-FR', {
+  weekday: 'long',
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+}).format(new Date())
+
+export function TasksView({
+  tasksHook,
+  onSignOut,
+  userEmail,
+}: {
+  tasksHook: TasksHook
+  onSignOut: () => Promise<void>
+  userEmail: string | null
+}) {
   const { showToast } = useToast()
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
 
@@ -55,7 +70,10 @@ export function TasksView({ tasksHook, onSignOut }: { tasksHook: TasksHook; onSi
   return (
     <div className="mx-auto max-w-xl px-4 py-10">
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">{strings.tasks.heading}</h1>
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">{userEmail ?? strings.tasks.heading}</h1>
+          <p className="text-sm capitalize text-slate-400">{todayLabel}</p>
+        </div>
         <button onClick={handleSignOut} className="text-sm text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
           {strings.common.signOut}
         </button>

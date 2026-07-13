@@ -21,7 +21,11 @@ function AppContent() {
   return (
     <>
       <ThemeToggle />
-      {auth.user ? <TasksView tasksHook={tasksHook} onSignOut={auth.signOut} /> : <AuthView auth={auth} />}
+      {auth.user ? (
+        <TasksView tasksHook={tasksHook} onSignOut={auth.signOut} userEmail={auth.user.email ?? null} />
+      ) : (
+        <AuthView auth={auth} />
+      )}
     </>
   )
 }

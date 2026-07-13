@@ -45,13 +45,14 @@ describe('App', () => {
     expect(screen.getByPlaceholderText(strings.auth.emailPlaceholder)).toBeInTheDocument()
   })
 
-  it('shows TasksView when logged in', () => {
+  it('shows TasksView with the user email as heading when logged in', () => {
     vi.mocked(useAuth).mockReturnValue({
-      user: { id: 'u1' }, loading: false, error: null, signIn: vi.fn(), signUp: vi.fn(), signOut: vi.fn(),
+      user: { id: 'u1', email: 'dimsxm@gmail.com' }, loading: false, error: null, signIn: vi.fn(), signUp: vi.fn(), signOut: vi.fn(),
     } as any)
     vi.mocked(useTasks).mockReturnValue(baseTasksHook())
 
     render(<App />)
-    expect(screen.getByText(strings.tasks.heading)).toBeInTheDocument()
+    expect(screen.getByText('dimsxm@gmail.com')).toBeInTheDocument()
+    expect(screen.getByText(strings.tasks.emptyAll)).toBeInTheDocument()
   })
 })
