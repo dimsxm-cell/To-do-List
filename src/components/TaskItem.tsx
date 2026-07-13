@@ -62,7 +62,7 @@ export function TaskItem({ task, onToggle, onDelete, onRename }: TaskItemProps) 
       <button
         {...attributes}
         {...listeners}
-        aria-label="Réordonner"
+        aria-label={strings.tasks.reorderLabel}
         className="cursor-grab text-slate-300 hover:text-slate-500 dark:text-slate-500"
       >
         ⠿

@@ -27,6 +27,7 @@ export const strings = {
     priorityHigh: 'Haute',
     deleteConfirm: 'Supprimer cette tâche',
     dueDateLabel: 'Échéance',
+    reorderLabel: 'Réorganiser',
   },
   toast: {
     taskAdded: 'Tâche ajoutée !',
