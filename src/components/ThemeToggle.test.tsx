@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { ThemeToggle } from './ThemeToggle'
+import { strings } from '../copy/strings'
 
 beforeEach(() => {
   window.localStorage.clear()
@@ -24,7 +25,7 @@ describe('ThemeToggle', () => {
 
   it('toggles to dark mode and persists it', () => {
     render(<ThemeToggle />)
-    fireEvent.click(screen.getByLabelText('Basculer le thème'))
+    fireEvent.click(screen.getByLabelText(strings.common.themeToggle))
     expect(document.documentElement.classList.contains('dark')).toBe(true)
     expect(window.localStorage.getItem('theme')).toBe('dark')
   })

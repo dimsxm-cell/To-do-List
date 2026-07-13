@@ -9,9 +9,9 @@ interface UseTasksResult {
   error: string | null
   filter: FilterValue
   setFilter: (filter: FilterValue) => void
-  addTask: (input: TaskInput) => Promise<void>
-  updateTask: (id: string, patch: Partial<TaskInput>) => Promise<void>
-  deleteTask: (id: string) => Promise<void>
+  addTask: (input: TaskInput) => Promise<boolean>
+  updateTask: (id: string, patch: Partial<TaskInput>) => Promise<boolean>
+  deleteTask: (id: string) => Promise<boolean>
   toggleComplete: (id: string) => Promise<void>
   reorderTasks: (orderedIds: string[]) => Promise<void>
 }
@@ -38,14 +38,16 @@ export function useTasks(userId: string | null): UseTasksResult {
 
   const addTask = useCallback(
     async (input: TaskInput) => {
-      if (!userId) return
+      if (!userId) return false
       setError(null)
       const position = allTasks.length
       try {
         const created = await taskApi.insertTask(userId, input, position)
         setAllTasks((prev) => sortTasks([...prev, created]))
+        return true
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
+        return false
       }
     },
     [userId, allTasks.length]
@@ -61,9 +63,11 @@ export function useTasks(userId: string | null): UseTasksResult {
       try {
         const updated = await taskApi.updateTaskRow(id, patch)
         setAllTasks((prev) => sortTasks(prev.map((t) => (t.id === id ? updated : t))))
+        return true
       } catch (err) {
         setAllTasks(previous)
         setError(err instanceof Error ? err.message : String(err))
+        return false
       }
     },
     [allTasks]
@@ -94,9 +98,11 @@ export function useTasks(userId: string | null): UseTasksResult {
       setAllTasks((prev) => prev.filter((t) => t.id !== id))
       try {
         await taskApi.deleteTaskRow(id)
+        return true
       } catch (err) {
         setAllTasks(previous)
         setError(err instanceof Error ? err.message : String(err))
+        return false
       }
     },
     [allTasks]
@@ -106,13 +112,17 @@ export function useTasks(userId: string | null): UseTasksResult {
     async (orderedIds: string[]) => {
       setError(null)
       const previous = allTasks
-      const reordered = orderedIds
-        .map((id, index) => {
-          const task = allTasks.find((t) => t.id === id)
-          return task ? { ...task, position: index } : null
-        })
-        .filter((t): t is Task => t !== null)
-      setAllTasks(sortTasks(reordered))
+      // orderedIds only covers the currently-visible (filtered) subset. Walk the
+      // full list in its current order and substitute the moved subset's new
+      // order in place, so tasks hidden by the active filter are never dropped.
+      const movedQueue = [...orderedIds]
+      const merged = sortTasks(allTasks).map((task) => {
+        if (!orderedIds.includes(task.id)) return task
+        const nextId = movedQueue.shift()!
+        return allTasks.find((t) => t.id === nextId)!
+      })
+      const reordered = merged.map((task, index) => ({ ...task, position: index }))
+      setAllTasks(reordered)
       try {
         await taskApi.reorderTaskRows(reordered.map((t) => ({ id: t.id, position: t.position })))
       } catch (err) {

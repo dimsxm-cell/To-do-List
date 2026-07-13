@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { strings } from '../copy/strings'
 
 function getInitialTheme(): 'light' | 'dark' {
   const stored = window.localStorage.getItem('theme')
@@ -17,7 +18,7 @@ export function ThemeToggle() {
   return (
     <button
       onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
-      aria-label="Basculer le thème"
+      aria-label={strings.common.themeToggle}
       className="fixed right-4 top-4 rounded-full bg-white p-2 text-lg shadow dark:bg-slate-800"
     >
       {theme === 'dark' ? '☀️' : '🌙'}

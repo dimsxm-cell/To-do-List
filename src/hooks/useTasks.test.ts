@@ -120,4 +120,81 @@ describe('useTasks', () => {
     expect(updatedTask?.completed).toBe(true)
     expect(updatedTask?.position).toBe(5)
   })
+
+  it('addTask resolves true on success and false on failure', async () => {
+    vi.mocked(taskApi.insertTask).mockResolvedValueOnce({ ...TASK_A, id: 'c' })
+    const { result } = renderHook(() => useTasks('user-1'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    let success: boolean | undefined
+    await act(async () => {
+      success = await result.current.addTask({ title: 'New' })
+    })
+    expect(success).toBe(true)
+
+    vi.mocked(taskApi.insertTask).mockRejectedValueOnce(new Error('boom'))
+    await act(async () => {
+      success = await result.current.addTask({ title: 'Fails' })
+    })
+    expect(success).toBe(false)
+  })
+
+  it('updateTask resolves true on success and false on failure', async () => {
+    vi.mocked(taskApi.updateTaskRow).mockResolvedValueOnce(TASK_A)
+    const { result } = renderHook(() => useTasks('user-1'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    let success: boolean | undefined
+    await act(async () => {
+      success = await result.current.updateTask('a', { title: 'New' })
+    })
+    expect(success).toBe(true)
+
+    vi.mocked(taskApi.updateTaskRow).mockRejectedValueOnce(new Error('boom'))
+    await act(async () => {
+      success = await result.current.updateTask('a', { title: 'Fails' })
+    })
+    expect(success).toBe(false)
+  })
+
+  it('deleteTask resolves true on success and false on failure', async () => {
+    vi.mocked(taskApi.deleteTaskRow).mockResolvedValueOnce(undefined)
+    const { result } = renderHook(() => useTasks('user-1'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    let success: boolean | undefined
+    await act(async () => {
+      success = await result.current.deleteTask('a')
+    })
+    expect(success).toBe(true)
+
+    vi.mocked(taskApi.deleteTaskRow).mockRejectedValueOnce(new Error('boom'))
+    await act(async () => {
+      success = await result.current.deleteTask('b')
+    })
+    expect(success).toBe(false)
+  })
+
+  it('reorderTasks under an active filter only repositions the visible subset and keeps hidden tasks', async () => {
+    const TASK_C = { id: 'c', title: 'C', completed: true, priority: 'medium' as const, dueDate: null, position: 2, createdAt: '2026-01-03' }
+    vi.mocked(taskApi.fetchTasks).mockResolvedValueOnce([TASK_A, TASK_B, TASK_C])
+    vi.mocked(taskApi.reorderTaskRows).mockResolvedValueOnce(undefined)
+
+    const { result } = renderHook(() => useTasks('user-1'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    act(() => {
+      result.current.setFilter('active')
+    })
+    expect(result.current.tasks.map((t) => t.id)).toEqual(['a', 'b'])
+
+    await act(async () => {
+      await result.current.reorderTasks(['b', 'a'])
+    })
+
+    act(() => {
+      result.current.setFilter('all')
+    })
+    expect(result.current.tasks.map((t) => t.id)).toEqual(['b', 'a', 'c'])
+  })
 })

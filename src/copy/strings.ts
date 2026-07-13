@@ -41,5 +41,6 @@ export const strings = {
   common: {
     loading: 'Chargement...',
     signOut: 'Se déconnecter',
+    themeToggle: 'Basculer le thème',
   },
 } as const

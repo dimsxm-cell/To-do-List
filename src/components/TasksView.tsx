@@ -21,18 +21,18 @@ export function TasksView({ tasksHook, onSignOut }: { tasksHook: TasksHook; onSi
   }, [tasksHook.error, showToast])
 
   async function handleAdd(input: Parameters<TasksHook['addTask']>[0]) {
-    await tasksHook.addTask(input)
-    showToast(strings.toast.taskAdded)
+    const success = await tasksHook.addTask(input)
+    if (success) showToast(strings.toast.taskAdded)
   }
 
   async function handleDelete(id: string) {
-    await tasksHook.deleteTask(id)
-    showToast(strings.toast.taskDeleted)
+    const success = await tasksHook.deleteTask(id)
+    if (success) showToast(strings.toast.taskDeleted)
   }
 
   async function handleRename(id: string, title: string) {
-    await tasksHook.updateTask(id, { title })
-    showToast(strings.toast.taskUpdated)
+    const success = await tasksHook.updateTask(id, { title })
+    if (success) showToast(strings.toast.taskUpdated)
   }
 
   async function handleSignOut() {

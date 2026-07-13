@@ -11,9 +11,9 @@ function makeHook(overrides = {}) {
     error: null,
     filter: 'all',
     setFilter: vi.fn(),
-    addTask: vi.fn().mockResolvedValue(undefined),
-    updateTask: vi.fn().mockResolvedValue(undefined),
-    deleteTask: vi.fn().mockResolvedValue(undefined),
+    addTask: vi.fn().mockResolvedValue(true),
+    updateTask: vi.fn().mockResolvedValue(true),
+    deleteTask: vi.fn().mockResolvedValue(true),
     toggleComplete: vi.fn(),
     reorderTasks: vi.fn(),
     ...overrides,
@@ -57,6 +57,17 @@ describe('TasksView', () => {
 
     await screen.findByText(strings.toast.taskAdded)
     expect(hook.addTask).toHaveBeenCalledWith({ title: 'Buy milk', priority: 'medium', dueDate: null })
+  })
+
+  it('does not show a success toast when addTask fails', async () => {
+    const hook = makeHook({ addTask: vi.fn().mockResolvedValue(false) })
+    renderView(hook)
+
+    fireEvent.change(screen.getByPlaceholderText(strings.tasks.addPlaceholder), { target: { value: 'Buy milk' } })
+    fireEvent.click(screen.getByText(strings.tasks.addButton))
+
+    await Promise.resolve()
+    expect(screen.queryByText(strings.toast.taskAdded)).not.toBeInTheDocument()
   })
 
   it('renders a task item for each task', () => {
