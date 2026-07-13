@@ -71,4 +71,53 @@ describe('useTasks', () => {
 
     expect(result.current.tasks.map((t) => t.id)).toEqual(['a'])
   })
+
+  it('updateTask with explicit null dueDate clears the due date', async () => {
+    const taskWithDueDate = { ...TASK_A, dueDate: '2026-12-25' }
+    vi.mocked(taskApi.fetchTasks).mockResolvedValueOnce([taskWithDueDate, TASK_B])
+    vi.mocked(taskApi.updateTaskRow).mockResolvedValueOnce({ ...taskWithDueDate, dueDate: null })
+
+    const { result } = renderHook(() => useTasks('user-1'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    expect(result.current.tasks.find((t) => t.id === 'a')?.dueDate).toBe('2026-12-25')
+
+    await act(async () => {
+      await result.current.updateTask('a', { dueDate: null })
+    })
+
+    expect(result.current.tasks.find((t) => t.id === 'a')?.dueDate).toBe(null)
+  })
+
+  it('updateTask uses server response to resync state', async () => {
+    const serverResponse = { ...TASK_A, title: 'Updated Title', priority: 'high' as const }
+    vi.mocked(taskApi.updateTaskRow).mockResolvedValueOnce(serverResponse)
+
+    const { result } = renderHook(() => useTasks('user-1'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    await act(async () => {
+      await result.current.updateTask('a', { title: 'New Title' })
+    })
+
+    const updatedTask = result.current.tasks.find((t) => t.id === 'a')
+    expect(updatedTask?.title).toBe('Updated Title')
+    expect(updatedTask?.priority).toBe('high')
+  })
+
+  it('toggleComplete uses server response to resync state', async () => {
+    const serverResponse = { ...TASK_A, completed: true, position: 5 }
+    vi.mocked(taskApi.updateTaskRow).mockResolvedValueOnce(serverResponse)
+
+    const { result } = renderHook(() => useTasks('user-1'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    await act(async () => {
+      await result.current.toggleComplete('a')
+    })
+
+    const updatedTask = result.current.tasks.find((t) => t.id === 'a')
+    expect(updatedTask?.completed).toBe(true)
+    expect(updatedTask?.position).toBe(5)
+  })
 })

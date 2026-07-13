@@ -32,7 +32,7 @@ export function useTasks(userId: string | null): UseTasksResult {
     taskApi
       .fetchTasks(userId)
       .then((tasks) => setAllTasks(sortTasks(tasks)))
-      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load tasks'))
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false))
   }, [userId])
 
@@ -45,7 +45,7 @@ export function useTasks(userId: string | null): UseTasksResult {
         const created = await taskApi.insertTask(userId, input, position)
         setAllTasks((prev) => sortTasks([...prev, created]))
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to add task')
+        setError(err instanceof Error ? err.message : String(err))
       }
     },
     [userId, allTasks.length]
@@ -56,13 +56,14 @@ export function useTasks(userId: string | null): UseTasksResult {
       setError(null)
       const previous = allTasks
       setAllTasks((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, ...patch, dueDate: patch.dueDate ?? t.dueDate } : t))
+        prev.map((t) => (t.id === id ? { ...t, ...patch, dueDate: patch.dueDate !== undefined ? patch.dueDate : t.dueDate } : t))
       )
       try {
-        await taskApi.updateTaskRow(id, patch)
+        const updated = await taskApi.updateTaskRow(id, patch)
+        setAllTasks((prev) => sortTasks(prev.map((t) => (t.id === id ? updated : t))))
       } catch (err) {
         setAllTasks(previous)
-        setError(err instanceof Error ? err.message : 'Failed to update task')
+        setError(err instanceof Error ? err.message : String(err))
       }
     },
     [allTasks]
@@ -76,10 +77,11 @@ export function useTasks(userId: string | null): UseTasksResult {
       const previous = allTasks
       setAllTasks((prev) => prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t)))
       try {
-        await taskApi.updateTaskRow(id, { completed: !target.completed })
+        const updated = await taskApi.updateTaskRow(id, { completed: !target.completed })
+        setAllTasks((prev) => sortTasks(prev.map((t) => (t.id === id ? updated : t))))
       } catch (err) {
         setAllTasks(previous)
-        setError(err instanceof Error ? err.message : 'Failed to update task')
+        setError(err instanceof Error ? err.message : String(err))
       }
     },
     [allTasks]
@@ -94,7 +96,7 @@ export function useTasks(userId: string | null): UseTasksResult {
         await taskApi.deleteTaskRow(id)
       } catch (err) {
         setAllTasks(previous)
-        setError(err instanceof Error ? err.message : 'Failed to delete task')
+        setError(err instanceof Error ? err.message : String(err))
       }
     },
     [allTasks]
@@ -115,7 +117,7 @@ export function useTasks(userId: string | null): UseTasksResult {
         await taskApi.reorderTaskRows(reordered.map((t) => ({ id: t.id, position: t.position })))
       } catch (err) {
         setAllTasks(previous)
-        setError(err instanceof Error ? err.message : 'Failed to reorder tasks')
+        setError(err instanceof Error ? err.message : String(err))
       }
     },
     [allTasks]
