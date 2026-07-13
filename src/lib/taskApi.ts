@@ -78,7 +78,9 @@ export async function deleteTaskRow(id: string): Promise<void> {
 }
 
 export async function reorderTaskRows(updates: { id: string; position: number }[]): Promise<void> {
-  await Promise.all(
+  const results = await Promise.all(
     updates.map(({ id, position }) => supabase.from('tasks').update({ position }).eq('id', id))
   )
+  const firstError = results.find((r) => r.error)?.error
+  if (firstError) throw firstError
 }

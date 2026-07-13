@@ -90,4 +90,11 @@ describe('taskApi', () => {
     expect(query.update).toHaveBeenCalledWith({ position: 1 })
     expect(query.update).toHaveBeenCalledWith({ position: 0 })
   })
+
+  it('reorderTaskRows throws on error', async () => {
+    const query = createMockQuery({ data: null, error: new Error('update failed') })
+    vi.mocked(supabase.from).mockReturnValue(query)
+
+    await expect(reorderTaskRows([{ id: 't1', position: 1 }])).rejects.toThrow('update failed')
+  })
 })
