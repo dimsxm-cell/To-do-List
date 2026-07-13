@@ -1,8 +1,18 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { TasksView } from './TasksView'
+import { TasksView, capitalizeFirst } from './TasksView'
 import { ToastProvider } from './Toast'
 import { strings } from '../copy/strings'
+
+describe('capitalizeFirst', () => {
+  it('uppercases only the first character, leaving the rest untouched', () => {
+    expect(capitalizeFirst('dimanche 13 juillet 2026')).toBe('Dimanche 13 juillet 2026')
+  })
+
+  it('does not capitalize every word (unlike CSS text-transform: capitalize)', () => {
+    expect(capitalizeFirst('dimanche 13 juillet 2026')).not.toBe('Dimanche 13 Juillet 2026')
+  })
+})
 
 function makeHook(overrides = {}) {
   return {

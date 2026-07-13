@@ -12,12 +12,18 @@ import { EmptyState } from './EmptyState'
 
 type TasksHook = ReturnType<typeof useTasks>
 
-const todayLabel = new Intl.DateTimeFormat('fr-FR', {
-  weekday: 'long',
-  year: 'numeric',
-  month: 'long',
-  day: 'numeric',
-}).format(new Date())
+export function capitalizeFirst(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+const todayLabel = capitalizeFirst(
+  new Intl.DateTimeFormat('fr-FR', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  }).format(new Date())
+)
 
 export function TasksView({
   tasksHook,
@@ -72,7 +78,7 @@ export function TasksView({
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">{userEmail ?? strings.tasks.heading}</h1>
-          <p className="text-sm capitalize text-slate-400">{todayLabel}</p>
+          <p className="text-sm text-slate-400">{todayLabel}</p>
         </div>
         <button onClick={handleSignOut} className="text-sm text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
           {strings.common.signOut}
