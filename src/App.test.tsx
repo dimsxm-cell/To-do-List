@@ -45,14 +45,16 @@ describe('App', () => {
     expect(screen.getByPlaceholderText(strings.auth.emailPlaceholder)).toBeInTheDocument()
   })
 
-  it('shows TasksView with the user email as heading when logged in', () => {
+  // TasksView is code-split, so it resolves after a microtask rather than on
+  // the first render pass.
+  it('shows TasksView with the user email as heading when logged in', async () => {
     vi.mocked(useAuth).mockReturnValue({
       user: { id: 'u1', email: 'dimsxm@gmail.com' }, loading: false, error: null, signIn: vi.fn(), signUp: vi.fn(), signOut: vi.fn(),
     } as any)
     vi.mocked(useTasks).mockReturnValue(baseTasksHook())
 
     render(<App />)
-    expect(screen.getByText('dimsxm@gmail.com')).toBeInTheDocument()
+    expect(await screen.findByText('dimsxm@gmail.com')).toBeInTheDocument()
     expect(screen.getByText(strings.tasks.emptyAll)).toBeInTheDocument()
   })
 })
