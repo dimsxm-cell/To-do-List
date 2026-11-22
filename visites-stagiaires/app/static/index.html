@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Visites stagiaires</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231f3a68'/><path d='M9 9h14v3H9zm0 5.5h14v3H9zM9 20h9v3H9z' fill='white'/></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a href="#/" class="brand"><span class="logo"></span>Visites stagiaires</a>
+    <nav>
+      <a href="#/" data-nav="accueil">Accueil</a>
+      <a href="#/stagiaires" data-nav="stagiaires">Stagiaires</a>
+      <a href="#/parametres" data-nav="parametres">Paramètres</a>
+    </nav>
+    <div id="etat" class="etat"></div>
+  </header>
+  <main id="app"><p class="muted center">Chargement…</p></main>
+  <div id="toast" class="toast" hidden></div>
+  <audio id="lecteur" preload="none"></audio>
+  <script src="app.js"></script>
+</body>
+</html>

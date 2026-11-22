@@ -1,0 +1,268 @@
+"""Tests de bout en bout (sans Internet, sans IA réelle : l'IA est simulée)."""
+
+import io
+import json
+import math
+import wave
+from pathlib import Path
+
+import docx
+import numpy as np
+import pytest
+
+FIX = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture()
+def client(tmp_path, monkeypatch):
+    monkeypatch.setenv("VISITES_DATA_DIR", str(tmp_path / "donnees"))
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    return TestClient(app)
+
+
+def _texte_docx(path) -> str:
+    d = docx.Document(str(path))
+    return "\n".join(t.text or "" for t in d.element.body.iter() if t.tag.endswith("}t"))
+
+
+def _wav_bytes(seconds=3.0, sr=16000) -> bytes:
+    t = np.arange(int(seconds * sr)) / sr
+    a = (0.2 * np.sin(2 * math.pi * 440 * t) * 32767).astype(np.int16)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(a.tobytes())
+    return buf.getvalue()
+
+
+# ------------------------------------------------------------------ bulletin
+
+def test_bulletin_rempli(tmp_path):
+    from app.bulletin import champs_manquants, fill_bulletin
+    from tests.exemple import visite_exemple
+
+    v = visite_exemple()
+    out = fill_bulletin(v, tmp_path / "b.docx")
+    txt = _texte_docx(out)
+    for attendu in ("DUPONT Camille", "20/11/2026", "CE1", "Baie-Mahault", "MARTIN Sophie, PEMF",
+                    "La consigne a été reformulée", "Éduscol", "Analyse lucide", "13 /20", "☒"):
+        assert attendu in txt, attendu
+    # La structure du modèle est conservée : mêmes rubriques, mêmes tableaux.
+    d = docx.Document(str(out))
+    assert len(d.tables) == 9
+    assert champs_manquants(v) == ["Point discuté 3"]
+
+
+def test_bulletin_vide_ne_plante_pas(tmp_path):
+    from app.bulletin import fill_bulletin
+    from app.defaults import empty_visit
+
+    out = fill_bulletin(empty_visit("x"), tmp_path / "vide.docx")
+    assert out.exists()
+    assert "X" not in [c.text.strip() for t in docx.Document(str(out)).tables for r in t.rows for c in r.cells]
+
+
+def test_positionnement_et_langue_marques(tmp_path):
+    from app.bulletin import fill_bulletin
+    from tests.exemple import visite_exemple
+
+    v = visite_exemple()
+    d = docx.Document(str(fill_bulletin(v, tmp_path / "b.docx")))
+    langue = next(t for t in d.tables if "MAITRISE" in t.rows[0].cells[0].text)
+    marques = [c.text.strip() for c in langue.rows[3].cells[:8]]
+    assert marques == ["", "", "X", "", "", "", "", "X"]  # orale S, écrite TS
+    pos = next(t for t in d.tables if "De 0 à 4" in t.rows[1].cells[0].text)
+    assert "X" in pos.rows[1].cells[2].text and "X" not in pos.rows[1].cells[1].text
+
+
+# ------------------------------------------------------------------ documents
+
+def test_detection_type_documents():
+    from app.documents import extract_text, guess_type
+
+    txt = extract_text(FIX / "fiche_seance_ce1.docx")
+    assert "Mise en commun" in txt and "Ardoises" in txt
+    assert guess_type(txt, "fiche_seance_ce1.docx") == "seance"
+    seq = "Fiche de séquence\nSéance 1 : découverte\nSéance 2 : entraînement\nSéance 3 : réinvestissement\nÉvaluation finale"
+    assert guess_type(seq, "doc.docx") == "sequence"
+    assert guess_type("Liste des élèves de la classe", "eleves.docx") == "autre"
+
+
+# ------------------------------------------------------------------ IA : sécurité et anti-invention
+
+def test_ia_refuse_adresse_exterieure():
+    from app import llm
+
+    with pytest.raises(llm.IAIndisponible):
+        llm.chat_json({"url": "https://api.exemple.com", "modele": "x"}, "s", "u", {})
+
+
+def test_extrait_verifie():
+    from app.analysis import extrait_present
+
+    src = "[Stagiaire 00:10] Par contre, la mise en commun a été trop rapide, je n'ai pas eu le temps."
+    assert extrait_present("la mise en commun a été trop rapide", src)
+    assert extrait_present("la mise en commun a ete trop rapide", src)  # accents perdus
+    assert not extrait_present("les élèves étaient agités et bruyants", src)
+
+
+def test_analyse_avec_ia_simulee(monkeypatch):
+    from app import analysis, llm
+
+    segments = [
+        {"debut": 0, "fin": 4, "texte": "Comment as-tu vécu ta séance ?", "locuteur": "F"},
+        {"debut": 4, "fin": 9, "texte": "La mise en commun a été trop rapide, je n'ai pas eu le temps.", "locuteur": "S"},
+        {"debut": 9, "fin": 12, "texte": "Il a commencé à pleuvoir, tu as un parapluie ?", "locuteur": "S", "hors_sujet": True},
+        {"debut": 12, "fin": 18, "texte": "Je te conseille d'afficher les procédures au tableau.", "locuteur": "F"},
+    ]
+    reponse = {
+        "A": {"constats": [], "reussites": [], "analyse_pratique": [], "questionnements": [], "propositions": [],
+              "difficultes": [{"texte": "Mise en commun trop rapide.", "extrait": "La mise en commun a été trop rapide"}]},
+        "B": {k: [] for k in analysis.CLES["B"]},
+        "C": {k: [] for k in analysis.CLES["C"]},
+        "D": "Bilan.",
+    }
+    reponse["C"]["conseils_pedagogiques"] = [
+        {"texte": "Afficher les procédures.", "extrait": "afficher les procédures au tableau"},
+        {"texte": "Utiliser des jetons.", "extrait": "prends des jetons de couleur"},  # inventé
+    ]
+    vu = {}
+
+    def fake(cfg, system, user, schema, timeout=0):
+        vu["user"] = user
+        return json.loads(json.dumps(reponse))
+
+    monkeypatch.setattr(llm, "chat_json", fake)
+    v = {"transcription": {"segments": segments}, "notes_formatrice": "", "documents": []}
+    res = analysis.analyse_reflexive({"contexte": 16384}, v, "grille")
+    assert res["A"]["difficultes"][0]["verifie"] is True
+    conseils = res["C"]["conseils_pedagogiques"]
+    assert conseils[0]["verifie"] is True and conseils[1]["verifie"] is False
+    assert "parapluie" not in vu["user"]  # le hors-sujet n'est jamais envoyé à l'analyse
+    assert "[Stagiaire" in vu["user"] and "[Formatrice" in vu["user"]
+
+
+def test_correction_trop_eloignee_refusee(monkeypatch):
+    from app import analysis, llm
+
+    segs = [{"texte": "les élèves on bien travailler", "id": "a"}, {"texte": "la séance était bien", "id": "b"}]
+
+    def fake(*a, **k):
+        return {"corrections": [
+            {"n": 1, "texte": "les élèves ont bien travaillé"},
+            {"n": 2, "texte": "la séance était catastrophique du début à la fin"},  # change le sens
+        ]}
+
+    monkeypatch.setattr(llm, "chat_json", fake)
+    nb = analysis.corriger_transcription({}, segs)
+    assert nb == 1
+    assert segs[0]["texte"] == "les élèves ont bien travaillé" and segs[0]["texte_original"]
+    assert segs[1]["texte"] == "la séance était bien"
+
+
+# ------------------------------------------------------------------ audio
+
+def test_decoupage_audio_sur_silence():
+    from app.audio import SR, split_points
+
+    son = np.ones(SR * 700, dtype=np.float32) * 0.5
+    son[SR * 302: SR * 303] = 0  # un silence près de la 5e minute
+    bornes = split_points(son)
+    assert bornes[0][0] == 0 and bornes[-1][1] == len(son)
+    assert SR * 302 <= bornes[0][1] <= SR * 303
+    assert all(a < b for a, b in bornes)
+
+
+def test_hallucinations_filtrees():
+    from app.audio import is_hallucination
+
+    assert is_hallucination("Sous-titrage ST' 501")
+    assert is_hallucination("Merci d'avoir regardé cette vidéo !")
+    assert not is_hallucination("Merci pour cette séance, c'était très riche.")
+
+
+# ------------------------------------------------------------------ parcours complet via l'API
+
+def test_parcours_complet(client):
+    r = client.get("/api/etat")
+    assert r.status_code == 200 and r.json()["ia"]["ok"] is False  # pas d'Ollama ici : pas de plantage
+
+    client.put("/api/parametres", json={**client.get("/api/parametres").json(),
+                                         "formatrice": {"nom": "MARTIN Sophie", "qualite": "PEMF", "lieu": "Baie-Mahault"}})
+    v = client.post("/api/visites", json={"admin": {"stagiaire_nom": "DUPONT Camille"}}).json()
+    vid = v["id"]
+    assert v["admin"]["formateurs"][0]["nom"] == "MARTIN Sophie"
+
+    v["admin"].update({"date": "2026-11-20", "classe": "CE1", "statut": "temps_plein"})
+    r = client.put(f"/api/visites/{vid}", json={"admin": v["admin"], "outils": {**v["outils"], "cahier_journal": True}})
+    assert r.json()["admin"]["classe"] == "CE1"
+
+    # Fiche stagiaire réutilisée à la visite suivante
+    client.post(f"/api/visites/{vid}/stagiaire")
+    st = client.get("/api/stagiaires").json()
+    assert st[0]["classe"] == "CE1"
+    v2 = client.post("/api/visites", json={"stagiaire_id": st[0]["id"]}).json()
+    assert v2["admin"]["classe"] == "CE1" and v2["admin"]["numero"] == "2"
+
+    # Documents
+    with open(FIX / "fiche_seance_ce1.docx", "rb") as f:
+        r = client.post(f"/api/visites/{vid}/documents", files=[("fichiers", ("fiche_seance_ce1.docx", f.read()))])
+    doc = r.json()["visite"]["documents"][0]
+    assert doc["type"] == "seance" and "Ardoises" in doc["texte"]
+    r = client.post(f"/api/visites/{vid}/documents", files=[("fichiers", ("photo.jpg", b"xx"))])
+    assert r.json()["erreurs"]
+
+    # Enregistrement envoyé par morceaux (comme le navigateur), puis finalisé
+    rec = client.post(f"/api/visites/{vid}/enregistrement", json={"mime": "audio/wav"}).json()
+    data = _wav_bytes(3)
+    for i in range(0, len(data), 20000):
+        assert client.post(f"/api/visites/{vid}/enregistrement/{rec['id']}/morceau", content=data[i:i + 20000]).status_code == 200
+    v = client.post(f"/api/visites/{vid}/enregistrement/{rec['id']}/fin").json()
+    a = v["audios"][0]
+    assert a["etat"] == "pret" and a["fichier"].endswith(".m4a") and 2.5 < a["duree"] < 3.6
+    r = client.get(f"/api/visites/{vid}/audios/{a['id']}")
+    assert r.status_code == 200 and r.headers["content-type"] == "audio/mp4"
+
+    # Import d'un fichier audio
+    v = client.post(f"/api/visites/{vid}/audios", files={"fichier": ("memo.wav", _wav_bytes(2))}).json()
+    assert len([x for x in v["audios"] if x["etat"] == "pret"]) == 2
+
+    # L'IA indisponible renvoie un message clair, sans planter
+    r = client.post(f"/api/visites/{vid}/analyser")
+    job = r.json()
+    import time
+    for _ in range(50):
+        j = client.get(f"/api/taches/{job['id']}").json()
+        if j["etat"] in ("termine", "erreur"):
+            break
+        time.sleep(0.1)
+    assert j["etat"] == "erreur" and "Ollama" in j["erreur"]
+
+    # Bulletin et exports
+    b = client.get(f"/api/visites/{vid}").json()["bulletin"]
+    b.update({"enseignements": "Mathématiques", "positionnement": "S", "positifs": ["Écoute"]})
+    client.put(f"/api/visites/{vid}", json={"bulletin": b, "notes_formatrice": "Rituel dynamique."})
+    manque = client.get(f"/api/visites/{vid}/manquants").json()
+    assert "Enseignements observés" not in manque and "Description de la séance" in manque
+    r = client.post(f"/api/visites/{vid}/exporter", json={"types": ["bulletin_docx", "transcription", "bilan", "synthese"]})
+    out = r.json()
+    assert len(out["fichiers"]) == 4 and not out["erreurs"]
+    r = client.get(f"/api/visites/{vid}/fichiers/{out['fichiers'][0]}")
+    assert r.status_code == 200 and len(r.content) > 10000
+
+    # Liste et suppression (vers la corbeille, récupérable)
+    assert any(x["id"] == vid for x in client.get("/api/visites").json())
+    client.delete(f"/api/visites/{vid}")
+    assert not any(x["id"] == vid for x in client.get("/api/visites").json())
+
+
+def test_acces_refuse_depuis_un_autre_site(client):
+    r = client.get("/api/visites", headers={"Origin": "https://site-malveillant.example"})
+    assert r.status_code == 403
+    r = client.get("/api/visites", headers={"Host": "192.168.1.20:8765"})
+    assert r.status_code == 403
