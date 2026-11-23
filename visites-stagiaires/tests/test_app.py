@@ -341,7 +341,7 @@ def test_legendes_transmises_a_l_ia():
     from app.analysis import legendes_photos
 
     v = {"photos": [{"legende": "Trace écrite : ovipare / vivipare"}, {"legende": ""}]}
-    assert legendes_photos(v) == "Photos prises pendant la séance : Trace écrite : ovipare / vivipare."
+    assert legendes_photos(v) == "Photos prises pendant la séance — Photo 1 : Trace écrite : ovipare / vivipare."
     assert legendes_photos({"photos": []}) == ""
 
 
@@ -381,3 +381,73 @@ def test_ia_reponse_au_fil_de_l_eau():
     assert res == {"D": "Bilan rédigé par morceaux.", "liste": ["a", "b"]}
     assert recu["payload"]["stream"] is True and recu["payload"]["keep_alive"] == "30m"
     assert etapes and etapes[0][1].startswith("L'IA lit")
+
+
+# ------------------------------------------------------------------ description, horaires, références
+
+def test_horaires_du_deroulement():
+    from app.analysis import horodater
+
+    d = [{"temps": "10 min – Rituel"}, {"temps": "Recherche 20 min"}, {"temps": "Mise en commun 10min"}]
+    t = [r["temps"] for r in horodater(d, "14h25 - 15h10")]
+    assert t == ["14h25 – 14h35 (10 min)\nRituel", "14h35 – 14h55 (20 min)\nRecherche",
+                 "14h55 – 15h05 (10 min)\nMise en commun"]
+    # Heures déjà notées par la formatrice : on se recale dessus
+    t = [r["temps"] for r in horodater([{"temps": "14h40 – 14h50 rituel"}, {"temps": "15 min"}], "14h25")]
+    assert t[1].startswith("14h50 – 15h05 (15 min)")
+    # Sans horaire, ou durée inconnue : on ne devine rien
+    assert horodater([{"temps": "10 min"}], "") == [{"temps": "10 min"}]
+    assert horodater([{"temps": "Rituel"}, {"temps": "10 min"}], "14h25")[0] == {"temps": "Rituel"}
+
+
+def test_preremplissage_references_et_horaires(monkeypatch):
+    from app import analysis, llm
+
+    def fake(cfg, system, user, schema, timeout=0, **kw):
+        assert "BIBLIOTHÈQUE DE RÉFÉRENCES" in user and "Photo 1 : Trace écrite" in user
+        return {
+            "enseignements": "Questionner le monde", "description": "Tri des animaux (photo 1).",
+            "deroulement": [{"temps": "10 min – Rappel", "deroulement": "a", "dispositif": "b", "organisation": "c"},
+                            {"temps": "25 min – Tri", "deroulement": "a", "dispositif": "b", "organisation": "c"}],
+            "points": [], "positifs": [], "ameliorer": [], "langue_observations": "",
+            "references": ["La main à la pâte – Le vivant", "Ouvrage imaginaire de M. Personne"],
+        }
+
+    monkeypatch.setattr(llm, "chat_json", fake)
+    v = {"admin": {"horaire": "9h00 – 9h45"}, "documents": [], "notes_formatrice": "Bonne séance.",
+         "photos": [{"legende": "Trace écrite au tableau"}], "analyse": {},
+         "transcription": {"segments": [{"debut": 0, "fin": 1, "texte": "Regarde le site La main à la pâte sur le vivant", "locuteur": "F"}]}}
+    res = analysis.preremplir_bulletin({"contexte": 16384}, v, "grille", bibliotheque="Éduscol – Le vivant au cycle 2")
+    assert [r["temps"] for r in res["deroulement"]] == ["9h00 – 9h10 (10 min)\nRappel", "9h10 – 9h35 (25 min)\nTri"]
+    refs = {r["texte"]: r for r in res["references"]}
+    assert refs["La main à la pâte – Le vivant"]["verifie"] is True
+    assert refs["Ouvrage imaginaire de M. Personne"]["verifie"] is False
+    assert len(res["points"]) == 3
+
+
+def test_synthese_complete_et_photos_dans_bulletin(client):
+    v = client.post("/api/visites", json={"admin": {"stagiaire_nom": "TEST Synthese", "horaire": "14h25"}}).json()
+    vid = v["id"]
+    client.post(f"/api/visites/{vid}/photos", files=[("fichiers", ("a.jpg", _image_bytes())), ("fichiers", ("b.jpg", _image_bytes()))])
+    b = client.get(f"/api/visites/{vid}").json()["bulletin"]
+    b.update({
+        "enseignements": "Questionner le monde : le vivant",
+        "description": "Les élèves trient des étiquettes d'animaux (photo 2).",
+        "deroulement": [{"temps": "14h25 – 14h35 (10 min)\nRappel", "deroulement": "Rappel séance 1", "dispositif": "Collectif", "organisation": "Vidéo"}],
+        "references": [{"texte": "Éduscol – Le vivant au cycle 2", "verifie": True}],
+        "points": [{"titre": "Tri", "analyse": "…", "ressources": "La main à la pâte"}, {}, {}],
+    })
+    client.put(f"/api/visites/{vid}", json={"bulletin": b})
+    out = client.post(f"/api/visites/{vid}/exporter",
+                      json={"types": ["synthese", "bulletin_docx"], "photos_dans_bulletin": True}).json()
+    from app import storage
+    edir = storage.visit_dir(vid) / "exports"
+    texte = _texte_docx(edir / out["fichiers"][0])
+    for attendu in ("La séance observée", "14h25 – 14h35 (10 min)", "(photo 2)", "Photo 1", "Photo 2",
+                    "Les activités des élèves en images", "Références à communiquer à la stagiaire",
+                    "Éduscol – Le vivant au cycle 2", "La main à la pâte"):
+        assert attendu in texte, attendu
+    assert texte.index("La séance observée") < texte.index("Points forts") < texte.index("Références à communiquer")
+    bul = docx.Document(str(edir / out["fichiers"][1]))
+    assert len(bul.inline_shapes) == 3 + 2  # images du modèle + 2 photos sous la description
+    assert "Photo 1" in _texte_docx(edir / out["fichiers"][1])

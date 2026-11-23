@@ -51,6 +51,9 @@ DEFAULT_SETTINGS = {
     "formatrice": {"nom": "", "qualite": "PEMF", "lieu": ""},
     "grille": GRILLE_PAR_DEFAUT,
     "vocabulaire": VOCABULAIRE_PAR_DEFAUT,
+    # Bibliothèque de références de la formatrice (une par ligne) : la seule source, avec l'entretien,
+    # où l'IA peut puiser les références à communiquer à la stagiaire.
+    "references": "",
     "ia": {
         "url": "http://127.0.0.1:11434",
         "modele": "mistral-nemo",
@@ -107,6 +110,7 @@ BULLETIN_VIDE = {
     "positionnement": "",  # TI | I | S | TS : choix de la formatrice uniquement
     "note": "",  # sur 20 : choix de la formatrice uniquement
     "date_signature": "",
+    "references": [],  # [{"texte", "source": "entretien"|"bibliotheque"|"", "verifie"}] à communiquer à la stagiaire
     "valide": False,
 }
 

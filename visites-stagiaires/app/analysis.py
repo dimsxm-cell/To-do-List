@@ -479,8 +479,10 @@ SCHEMA_BULLETIN = {
         "positifs": {"type": "array", "items": {"type": "string"}},
         "ameliorer": {"type": "array", "items": {"type": "string"}},
         "langue_observations": {"type": "string"},
+        "references": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["enseignements", "description", "deroulement", "points", "positifs", "ameliorer", "langue_observations"],
+    "required": ["enseignements", "description", "deroulement", "points", "positifs", "ameliorer",
+                 "langue_observations", "references"],
 }
 
 
@@ -496,33 +498,121 @@ def analyse_en_texte(analyse: dict) -> str:
 
 
 def legendes_photos(visit: dict) -> str:
-    """Les légendes des photos de la séance, écrites par la formatrice, sont des observations."""
-    leg = [p.get("legende", "").strip() for p in visit.get("photos", []) if p.get("legende", "").strip()]
-    return ("Photos prises pendant la séance : " + " ; ".join(leg) + ".") if leg else ""
+    """Les légendes des photos de la séance, écrites par la formatrice, sont des observations.
+
+    Les photos sont numérotées dans l'ordre choisi par la formatrice : l'IA peut y renvoyer
+    (« voir photo 2 ») et les documents exportés utilisent la même numérotation.
+    """
+    leg = [
+        f"Photo {n} : {p.get('legende', '').strip()}"
+        for n, p in enumerate(visit.get("photos", []), 1) if p.get("legende", "").strip()
+    ]
+    return ("Photos prises pendant la séance — " + " ; ".join(leg) + ".") if leg else ""
 
 
-def preremplir_bulletin(cfg: dict, visit: dict, grille: str, progress=lambda p, m="": None) -> dict:
+# ------------------------------------------------------------------ horaires du déroulement
+
+_HEURE = re.compile(r"(\d{1,2})\s*[hH:]\s*(\d{2})?")
+_DUREE = re.compile(r"(\d{1,3})\s*(?:min|mn|minutes?|')", re.IGNORECASE)
+
+
+def _fmt(minutes: int) -> str:
+    h, m = divmod(minutes % (24 * 60), 60)
+    return f"{h}h{m:02d}"
+
+
+def horodater(deroulement: list[dict], horaire: str) -> list[dict]:
+    """Ajoute l'heure de début et de fin à chaque phase : « 14h25 – 14h35 (10 min) ».
+
+    Calcul uniquement si l'heure de début de séance est connue (champ Horaire) et que
+    chaque phase sans heure indique sa durée. Une phase qui a déjà une heure est gardée
+    telle quelle et sert de point de repère pour la suite.
+    """
+    m = _HEURE.search(horaire or "")
+    if not m or not deroulement:
+        return deroulement
+    courant = int(m.group(1)) * 60 + int(m.group(2) or 0)
+    out = []
+    for r in deroulement:
+        r = dict(r)
+        temps = r.get("temps", "")
+        heures = _HEURE.findall(temps)
+        duree = _DUREE.search(temps)
+        if heures:
+            # Heure déjà notée (par exemple dans les notes de la formatrice) : on se recale dessus.
+            dernier = heures[-1]
+            courant = int(dernier[0]) * 60 + int(dernier[1] or 0)
+            if len(heures) == 1:
+                # Une seule heure : c'est le début de la phase ; sans durée, la fin reste inconnue.
+                courant = courant + int(duree.group(1)) if duree else None
+        elif courant is None:
+            pass  # heure de début inconnue : on ne devine pas
+        elif duree:
+            d = int(duree.group(1))
+            reste = _DUREE.sub("", temps).strip(" -–—,:()")
+            r["temps"] = f"{_fmt(courant)} – {_fmt(courant + d)} ({d} min)" + (f"\n{reste}" if reste else "")
+            courant += d
+        else:
+            return deroulement  # une durée inconnue : on ne devine pas la suite
+        out.append(r)
+    return out
+
+
+def verifier_references(refs: list[str], bibliotheque: str, sources: str) -> list[dict]:
+    """Une référence doit venir de l'entretien / des notes, ou de la bibliothèque de la formatrice."""
+    biblio = [ln.strip(" -•\t") for ln in (bibliotheque or "").splitlines() if ln.strip()]
+    out = []
+    for r in refs:
+        r = str(r).strip(" -•")
+        if not r:
+            continue
+        dans_biblio = any(
+            difflib.SequenceMatcher(None, _norm(r), _norm(b)).ratio() > 0.6 or _norm(b) in _norm(r) or _norm(r) in _norm(b)
+            for b in biblio
+        )
+        mots = [w for w in _norm(r).split() if len(w) > 3][:6]
+        dans_sources = bool(mots) and sum(w in _norm(sources) for w in mots) >= max(1, len(mots) * 2 // 3)
+        out.append({
+            "texte": r,
+            "source": "bibliotheque" if dans_biblio else "entretien" if dans_sources else "",
+            "verifie": dans_biblio or dans_sources,
+        })
+    return out
+
+
+def preremplir_bulletin(cfg: dict, visit: dict, grille: str, progress=lambda p, m="": None,
+                        bibliotheque: str = "") -> dict:
     adm = visit.get("admin", {})
     docs = resume_documents(visit.get("documents", []))
-    notes = ((visit.get("notes_formatrice") or "") + "\n" + legendes_photos(visit)).strip()
+    photos = legendes_photos(visit)
+    notes = ((visit.get("notes_formatrice") or "") + "\n" + photos).strip()
     ana = analyse_en_texte(visit.get("analyse", {}))
     trans = transcript_text(visit.get("transcription", {}).get("segments", []))
     if not (docs or notes or ana or trans):
         raise llm.IAIndisponible("Il n'y a encore aucune information pour préremplir le bulletin.")
-    reste = _budget_chars(cfg) - len(docs) - len(notes) - len(ana) - len(grille) - 3000
+    biblio = (bibliotheque or "").strip()
+    reste = _budget_chars(cfg) - len(docs) - len(notes) - len(ana) - len(grille) - len(biblio) - 3500
     extrait_trans = trans[: max(0, reste)] if reste > 2000 else ""
     user = (
         f"GRILLE ET ATTENTES :\n{grille}\n\n"
-        f"CLASSE : {adm.get('classe', '')} – effectif {adm.get('effectif', '')}\n\n"
+        f"CLASSE : {adm.get('classe', '')} – effectif {adm.get('effectif', '')} – horaire de la séance : "
+        f"{adm.get('horaire', '') or 'non renseigné'}\n\n"
         + (f"DOCUMENTS DE LA STAGIAIRE :\n{docs}\n\n" if docs else "")
-        + (f"NOTES DE LA FORMATRICE :\n{notes}\n\n" if notes else "")
+        + (f"NOTES DE LA FORMATRICE (dont les légendes des photos) :\n{notes}\n\n" if notes else "")
         + (f"ANALYSE DE L'ENTRETIEN (validée par la formatrice) :\n{ana}\n\n" if ana else "")
         + (f"TRANSCRIPTION (extrait) :\n{extrait_trans}\n\n" if extrait_trans else "")
+        + (f"BIBLIOTHÈQUE DE RÉFÉRENCES DE LA FORMATRICE :\n{biblio}\n\n" if biblio else "")
         + "Prépare les rubriques du bulletin officiel de visite :\n"
-        "- enseignements : domaine ou discipline + objectif(s) de la séance observée (2 lignes maximum).\n"
-        "- description : description factuelle de la séance présentée (3 à 6 lignes).\n"
-        "- deroulement : les phases de la séance (temps/phase, déroulement, dispositif, organisation matérielle), "
-        "d'après la fiche de séance et les notes. Liste vide si aucune source ne les décrit.\n"
+        "- enseignements : domaine ou discipline + objectif(s) de la séance observée (2 à 3 lignes).\n"
+        "- description : description DÉTAILLÉE mais synthétique de la séance présentée (8 à 12 lignes) : "
+        "place de la séance dans la séquence, objectif, enchaînement des phases, ce que font concrètement les "
+        "élèves (activités, productions, supports, manipulations), organisation (collectif, binômes, individuel), "
+        "différenciation et rôle de l'enseignante. Quand une photo illustre une activité, renvoie-y entre "
+        "parenthèses, par exemple « (photo 2) ».\n"
+        "- deroulement : les phases de la séance. Pour « temps », indique l'heure de début et de fin si elles "
+        "sont connues (notes de la formatrice, horaire de la séance) ET la durée, par exemple "
+        "« 14h25 – 14h35 (10 min) – Rituel » ; sinon la durée seule, par exemple « 10 min – Rituel ». "
+        "Puis déroulement, dispositif, organisation matérielle. Liste vide si aucune source ne décrit les phases.\n"
         "- points : les 3 sujets LES PLUS DISCUTÉS pendant l'entretien. Pour chacun : titre court ; analyse = "
         "éléments d'analyse ET conseils donnés (3 à 5 lignes) ; ressources = uniquement les supports ou ressources "
         "réellement cités dans l'entretien ou les notes (sinon chaîne vide). Moins de 3 points si l'entretien "
@@ -531,10 +621,14 @@ def preremplir_bulletin(cfg: dict, visit: dict, grille: str, progress=lambda p, 
         "argumentation, prise de recul), en phrases courtes. Listes vides si rien ne le permet.\n"
         "- langue_observations : observation sur la maîtrise de la langue UNIQUEMENT si les sources en parlent, "
         "sinon chaîne vide.\n"
+        "- references : les références à communiquer à la stagiaire à la fin de l'entretien (ouvrages, sites, "
+        "documents officiels, outils), UNIQUEMENT parmi celles citées dans l'entretien ou les notes, et celles de "
+        "la bibliothèque de la formatrice qui correspondent aux points discutés. Recopie-les telles quelles, "
+        "avec leur lien s'il est donné. N'en invente aucune.\n"
         "N'écris jamais de note, de positionnement (TI, I, S, TS) ni d'appréciation chiffrée : c'est la formatrice "
         "qui décide. N'invente rien.\n\nRéponds en JSON."
     )
-    res = llm.chat_json(cfg, SYSTEME, user, SCHEMA_BULLETIN, attendu=3500,
+    res = llm.chat_json(cfg, SYSTEME, user, SCHEMA_BULLETIN, attendu=5000,
                         progress=lambda f, m: progress(0.05 + 0.93 * f, m))
     points = [
         {"titre": str(p.get("titre", "")).strip(), "analyse": str(p.get("analyse", "")).strip(),
@@ -543,15 +637,17 @@ def preremplir_bulletin(cfg: dict, visit: dict, grille: str, progress=lambda p, 
     ]
     while len(points) < 3:
         points.append({"titre": "", "analyse": "", "ressources": ""})
+    deroulement = [
+        {k: str(r.get(k, "")).strip() for k in ("temps", "deroulement", "dispositif", "organisation")}
+        for r in (res.get("deroulement") or []) if isinstance(r, dict)
+    ]
     return {
         "enseignements": str(res.get("enseignements", "")).strip(),
         "description": str(res.get("description", "")).strip(),
-        "deroulement": [
-            {k: str(r.get(k, "")).strip() for k in ("temps", "deroulement", "dispositif", "organisation")}
-            for r in (res.get("deroulement") or []) if isinstance(r, dict)
-        ],
+        "deroulement": horodater(deroulement, adm.get("horaire", "")),
         "points": points,
         "positifs": [str(x).strip() for x in res.get("positifs") or [] if str(x).strip()],
         "ameliorer": [str(x).strip() for x in res.get("ameliorer") or [] if str(x).strip()],
         "langue_observations": str(res.get("langue_observations", "")).strip(),
+        "references": verifier_references(res.get("references") or [], biblio, trans + "\n" + notes + "\n" + docs),
     }

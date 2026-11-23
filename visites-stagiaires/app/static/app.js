@@ -228,6 +228,9 @@ async function pageParametres() {
       <textarea data-k="grille" rows="18">${esc(s.grille)}</textarea>
       <div class="ligne fin" style="margin-top:8px"><button class="btn mini" id="grilleDefaut">Revenir à la grille d'origine</button></div>
     </div>
+    <div class="carte"><h2>Votre bibliothèque de références</h2>
+      <div class="aide">Une référence par ligne (ouvrage, site Éduscol, document officiel, outil), avec son lien si vous voulez. À chaque visite, l'IA y choisit celles qui correspondent aux points discutés, en plus de celles citées pendant l'entretien. Elle n'en invente jamais d'autres.</div>
+      <textarea data-k="references" rows="8" placeholder="Ex. : Éduscol – Résoudre des problèmes au cycle 2 : https://eduscol.education.fr/…">${esc(s.references || "")}</textarea></div>
     <div class="carte"><h2>Vocabulaire du métier</h2>
       <p class="muted small">Aide la transcription à bien écrire les sigles et termes (REP+, AESH, Éduscol…).</p>
       <textarea data-k="vocabulaire" rows="3">${esc(s.vocabulaire)}</textarea></div>
@@ -898,9 +901,10 @@ function stepBulletin(p) {
       <label>Domaine ou discipline, objectifs de la (des) séance(s)</label>
       <textarea class="auto" rows="2" data-bind="bulletin.enseignements" placeholder="${AFAIRE}">${esc(b.enseignements)}</textarea>
       <label style="margin-top:12px">Description de la (des) séance(s) présentée(s)</label>
-      <textarea class="auto" rows="4" data-bind="bulletin.description" placeholder="${AFAIRE}">${esc(b.description)}</textarea>
+      <textarea class="auto" rows="9" data-bind="bulletin.description" placeholder="${AFAIRE}">${esc(b.description)}</textarea>
       <h3>Déroulement</h3>
-      <table class="table-der"><thead><tr><th style="width:16%">Temps (minutage/phase)</th><th>Déroulement</th><th style="width:16%">Dispositif</th><th style="width:20%">Organisation matérielle</th><th style="width:34px"></th></tr></thead>
+      <div class="muted small" style="margin-bottom:6px">Astuce : avec l'horaire de la séance (étape Infos) et les durées, l'appli note les heures de chaque phase, par exemple « 14h25 – 14h35 (10 min) ».</div>
+      <table class="table-der"><thead><tr><th style="width:18%">Horaire / durée</th><th>Déroulement</th><th style="width:16%">Dispositif</th><th style="width:20%">Organisation matérielle</th><th style="width:34px"></th></tr></thead>
         <tbody>${b.deroulement.map((r, i) => `<tr>${["temps", "deroulement", "dispositif", "organisation"].map((k) => `<td><textarea class="auto" rows="2" data-bind="bulletin.deroulement.${i}.${k}">${esc(r[k])}</textarea></td>`).join("")}<td><button class="btn mini danger" data-del-row="${i}">✕</button></td></tr>`).join("")}</tbody></table>
       <button class="btn mini" id="ajLigne" style="margin-top:6px">+ Ajouter une phase</button>
     </div>
@@ -924,6 +928,11 @@ function stepBulletin(p) {
         <div><label>Écrite</label>${radios("bulletin.langue.ecrite", b.langue.ecrite)}</div>
         <div class="span2"><label>Observations</label><textarea class="auto" rows="2" data-bind="bulletin.langue.observations" placeholder="${AFAIRE}">${esc(b.langue.observations)}</textarea></div>
       </div></div>
+    <div class="carte"><h2>Références à communiquer à la stagiaire</h2>
+      <div class="aide">Citées pendant l'entretien ou choisies dans votre bibliothèque (Paramètres). Elles figurent à la fin de la synthèse et du bilan. Une par ligne.</div>
+      ${(b.references || []).filter((r) => !r.verifie).map((r) => `<div class="alerte" style="margin-bottom:8px">⚠ Introuvable dans l'entretien et dans votre bibliothèque, à vérifier : « ${esc(r.texte)} »</div>`).join("")}
+      <textarea class="auto" rows="4" id="references" placeholder="${AFAIRE}">${esc((b.references || []).map((r) => r.texte).join("\n"))}</textarea>
+    </div>
     <div class="carte"><h2>Évaluation (votre décision)</h2>
       <div class="grille g2">
         <div><label>Positionnement</label>${radios("bulletin.positionnement", b.positionnement)}
@@ -936,6 +945,12 @@ function stepBulletin(p) {
     </div>`;
   bind(p);
   $("#preremplir").onclick = () => (!b.prerempli || confirm("Remplacer les rubriques déjà rédigées par une nouvelle proposition ? (positionnement, note et langue sont conservés)")) && startJob(`/api/visites/${v.id}/preremplir`);
+  $("#references").addEventListener("input", (e) => {
+    // Ce que la formatrice écrit ou garde est validé par elle.
+    b.references = e.target.value.split("\n").map((x) => x.replace(/^[-•]\s*/, "").trim()).filter(Boolean)
+      .map((texte) => ({ texte, source: "formatrice", verifie: true }));
+    save({ bulletin: b });
+  });
   $("#ajLigne").onclick = () => { b.deroulement.push({ temps: "", deroulement: "", dispositif: "", organisation: "" }); save({ bulletin: b }); stepBulletin(p); };
   p.onclick = (e) => {
     const x = e.target.closest("button");
@@ -970,16 +985,18 @@ async function stepExport(p) {
       <div class="cases" style="grid-template-columns:1fr">
         ${choix.map(([k, l, ok]) => `<label><input type="checkbox" value="${k}" ${ok ? "checked" : "disabled"}> ${l}${!ok ? ` <span class="muted small">— installez LibreOffice ou Word pour le PDF</span>` : ""}</label>`).join("")}
       </div>
+      ${(v.photos || []).length ? `<label style="display:flex;gap:10px;align-items:center;margin-top:12px;font-weight:500"><input type="checkbox" id="photosBulletin"> Ajouter aussi les ${v.photos.length} photo(s) dans le bulletin officiel, sous la description de la séance</label>` : ""}
       <div class="ligne" style="margin-top:14px"><button class="btn primaire gros" id="exporter">Créer les documents</button></div>
     </div>
     <div id="resultat"></div>`;
   $("#exporter").onclick = async () => {
-    const types = $$("input[type=checkbox]:checked", p).map((c) => c.value);
+    const types = $$(".cases input[type=checkbox]:checked", p).map((c) => c.value);
+    const photosDansBulletin = !!($("#photosBulletin") && $("#photosBulletin").checked);
     if (!types.length) return toast("Cochez au moins un document.", true);
     $("#exporter").disabled = true;
     $("#exporter").textContent = "Création…";
     try {
-      const r = await api("POST", `/api/visites/${v.id}/exporter`, { types });
+      const r = await api("POST", `/api/visites/${v.id}/exporter`, { types, photos_dans_bulletin: photosDansBulletin });
       $("#resultat").innerHTML = `<div class="carte"><h2>Documents prêts</h2>
         ${r.erreurs.map((e) => `<div class="erreur">${esc(e)}</div>`).join("")}
         <div class="fichiers">${r.fichiers.map((f) => `<a href="/api/visites/${v.id}/fichiers/${encodeURIComponent(f)}" download>📄 <span style="flex:1">${esc(f)}</span><span class="muted small">Télécharger</span></a>`).join("")}</div>

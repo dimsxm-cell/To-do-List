@@ -547,13 +547,15 @@ def analyser(vid: str):
 @app.post("/api/visites/{vid}/preremplir")
 def preremplir(vid: str):
     def work(s, progress):
-        res = analysis.preremplir_bulletin(s["ia"], storage.get_visit(vid), s["grille"], progress)
+        res = analysis.preremplir_bulletin(s["ia"], storage.get_visit(vid), s["grille"], progress,
+                                           bibliotheque=s.get("references", ""))
 
         def apply(v):
             b = v["bulletin"]
             for k in ("enseignements", "description", "deroulement", "points", "positifs", "ameliorer"):
                 b[k] = res[k]
             b["langue"]["observations"] = res["langue_observations"]
+            b["references"] = res["references"]
             b["prerempli"] = datetime.now().isoformat(timespec="seconds")
             b["valide"] = False
         storage.update_visit(vid, apply)
@@ -590,13 +592,17 @@ def exporter(vid: str, data: dict = Body(...)):
     out = storage.visit_dir(vid) / "exports"
     out.mkdir(parents=True, exist_ok=True)
     types = data.get("types") or []
+    avec_photos = bool(data.get("photos_dans_bulletin"))
     fichiers, erreurs = [], []
     bulletin_docx = None
     for t in types:
         try:
             if t == "bulletin_pdf":
-                bulletin_docx = bulletin_docx or exports.export_bulletin_docx(v, out)
+                bulletin_docx = bulletin_docx or exports.export_bulletin_docx(v, out, avec_photos)
                 fichiers.append(exports.docx_to_pdf(bulletin_docx).name)
+            elif t == "bulletin_docx":
+                p = bulletin_docx = exports.export_bulletin_docx(v, out, avec_photos)
+                fichiers.append(p.name)
             elif t in EXPORTS:
                 p = EXPORTS[t](v, out)
                 if t == "bulletin_docx":

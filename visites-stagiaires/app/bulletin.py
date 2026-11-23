@@ -220,7 +220,7 @@ class _Doc:
 
 # ------------------------------------------------------------------ remplissage
 
-def fill_bulletin(visit: dict, out_path: Path, modele: Path = MODELE) -> Path:
+def fill_bulletin(visit: dict, out_path: Path, modele: Path = MODELE, photos: list | None = None) -> Path:
     d = _Doc(modele)
     adm = visit.get("admin", {})
     b = visit.get("bulletin", {})
@@ -283,10 +283,13 @@ def fill_bulletin(visit: dict, out_path: Path, modele: Path = MODELE) -> Path:
         for ln in b["enseignements"].split("\n"):
             anchor = _insert_after(anchor, _new_paragraph(ln))
     p = d.paragraph_starting("Description de la")
-    if p is not None and b.get("description"):
+    if p is not None and (b.get("description") or photos):
         anchor = p
-        for ln in b["description"].split("\n"):
-            anchor = _insert_after(anchor, _new_paragraph(ln))
+        for ln in (b.get("description") or "").split("\n"):
+            if ln.strip():
+                anchor = _insert_after(anchor, _new_paragraph(ln))
+        if photos:
+            anchor = _inserer_photos(d, anchor, photos)
 
     # --- Tableau de déroulement
     t = d.table_with("Temps(minutage")
@@ -466,3 +469,19 @@ def champs_manquants(visit: dict) -> list[str]:
         if not ok:
             manque.append(label)
     return manque
+
+
+def _inserer_photos(d: "_Doc", anchor, photos: list):
+    """Photos de la séance sous la description : 3 par ligne, légendes en dessous (option d'export)."""
+    from docx.shared import Cm
+    from docx.text.paragraph import Paragraph
+
+    for i in range(0, len(photos), 3):
+        lot = photos[i:i + 3]
+        p_img = _insert_after(anchor, _new_paragraph(align="center"))
+        para = Paragraph(p_img, d.doc._body)
+        for chemin, _leg in lot:
+            para.add_run().add_picture(str(chemin), height=Cm(4.5))
+            para.add_run("   ")
+        anchor = _insert_after(p_img, _new_paragraph("   |   ".join(leg for _c, leg in lot), align="center"))
+    return anchor
