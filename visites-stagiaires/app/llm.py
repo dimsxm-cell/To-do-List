@@ -72,22 +72,74 @@ def status(cfg: dict) -> dict:
     }
 
 
-def chat_json(cfg: dict, system: str, user: str, schema: dict, timeout: float = 1800) -> dict:
-    """Envoie une demande et exige une réponse JSON conforme au schéma."""
+def chat_json(cfg: dict, system: str, user: str, schema: dict, timeout: float = 1800,
+              progress=None, attendu: int = 3000) -> dict:
+    """Envoie une demande et exige une réponse JSON conforme au schéma.
+
+    La réponse arrive au fil de l'eau : progress(fraction, message) est appelé pendant
+    que l'IA écrit, pour que la barre d'avancement bouge vraiment. `attendu` est la
+    longueur approximative (en caractères) de la réponse, pour estimer la fraction.
+    """
     base = _check_local(cfg["url"])
     payload = {
         "model": cfg["modele"],
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        "stream": False,
+        "stream": True,
         "format": schema,
+        # Le modèle reste chargé 30 min : pas de rechargement entre l'analyse et le bulletin.
+        "keep_alive": "30m",
         "options": {
             "temperature": float(cfg.get("temperature", 0.2)),
             "num_ctx": int(cfg.get("contexte", 16384)),
         },
     }
-    data = _post(base + "/api/chat", payload, timeout)
-    content = (data.get("message") or {}).get("content", "")
-    return parse_json(content)
+    if progress:
+        progress(0.0, "L'IA lit l'entretien et les documents…")
+    morceaux: list[str] = []
+    taille, dernier = 0, 0.0
+    import time
+
+    for obj in _stream(base + "/api/chat", payload, timeout):
+        if obj.get("error"):
+            raise IAIndisponible(f"L'IA locale a renvoyé une erreur : {obj['error']}")
+        bout = (obj.get("message") or {}).get("content", "")
+        if bout:
+            morceaux.append(bout)
+            taille += len(bout)
+            if progress and time.monotonic() - dernier > 0.8:
+                dernier = time.monotonic()
+                mots = len("".join(morceaux).split())
+                progress(min(0.97, taille / max(attendu, 1)), f"L'IA rédige… ({mots} mots écrits)")
+        if obj.get("done"):
+            break
+    return parse_json("".join(morceaux))
+
+
+def _stream(url: str, payload: dict, timeout: float):
+    """Lit la réponse d'Ollama ligne par ligne (un objet JSON par ligne)."""
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(req, timeout=timeout) as r:
+            for line in r:
+                line = line.strip()
+                if line:
+                    yield json.loads(line.decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "ignore")
+        if e.code == 404 and "not found" in body.lower():
+            raise IAIndisponible(
+                f"Le modèle d'IA « {payload.get('model')} » n'est pas installé. "
+                "Relancez l'installation ou choisissez un autre modèle dans les Paramètres."
+            ) from e
+        raise IAIndisponible(f"L'IA locale a renvoyé une erreur ({e.code}) : {body[:300]}") from e
+    except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+        raise IAIndisponible(
+            "L'IA locale (Ollama) ne répond pas. Ouvrez l'application Ollama sur le Mac, puis réessayez."
+        ) from e
 
 
 def parse_json(content: str) -> dict:

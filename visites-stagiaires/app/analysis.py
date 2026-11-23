@@ -149,7 +149,8 @@ def attribuer_interlocuteurs(cfg: dict, segments: list[dict], progress=lambda p,
             + (f"\nLignes précédentes (pour le contexte) :\n{avant}\n" if avant else "")
             + f"\nLignes à traiter :\n{lignes}\n\nRéponds en JSON."
         )
-        res = llm.chat_json(cfg, SYSTEME, user, SCHEMA_LOC)
+        res = llm.chat_json(cfg, SYSTEME, user, SCHEMA_LOC, attendu=45 * len(lot),
+                            progress=lambda f, m, k=k: progress((k + f) / total, f"Interlocuteurs : lot {k + 1}/{total}"))
         par_n = {int(x.get("n", 0)): x for x in res.get("lignes", []) if isinstance(x, dict)}
         for i, s in enumerate(lot):
             if s.get("verrouille"):
@@ -200,7 +201,8 @@ def corriger_transcription(cfg: dict, segments: list[dict], vocabulaire: str = "
             + (f"Vocabulaire du métier : {vocabulaire}\n" if vocabulaire else "")
             + f"\nLignes :\n{lignes}\n\nRéponds en JSON."
         )
-        res = llm.chat_json(cfg, SYSTEME, user, SCHEMA_CORR)
+        res = llm.chat_json(cfg, SYSTEME, user, SCHEMA_CORR, attendu=25 * len(lot),
+                            progress=lambda f, m, k=k: progress((k + f) / total, f"Corrections : lot {k + 1}/{total}"))
         for c in res.get("corrections", []):
             try:
                 i = int(c.get("n", 0)) - 1
@@ -250,7 +252,7 @@ SCHEMA_DOC = {
 }
 
 
-def analyser_document(cfg: dict, texte: str, nom: str, type_devine: str) -> dict:
+def analyser_document(cfg: dict, texte: str, nom: str, type_devine: str, progress=None) -> dict:
     extrait = texte[: _budget_chars(cfg, 4000)]
     user = (
         f"Document importé : « {nom} » (type pressenti : {type_devine}).\n"
@@ -262,7 +264,7 @@ def analyser_document(cfg: dict, texte: str, nom: str, type_devine: str) -> dict
         "en œuvre (différenciation, évaluation…) et un résumé de 2 à 3 phrases. Laisse vide ce qui n'y figure pas.\n\n"
         f"TEXTE DU DOCUMENT :\n{extrait}\n\nRéponds en JSON."
     )
-    return llm.chat_json(cfg, SYSTEME, user, SCHEMA_DOC)
+    return llm.chat_json(cfg, SYSTEME, user, SCHEMA_DOC, attendu=2000, progress=progress)
 
 
 def resume_documents(documents: list[dict]) -> str:
@@ -350,9 +352,10 @@ CONSIGNE_ANALYSE = (
     "Règles :\n"
     "- Respecte strictement qui a parlé : les lignes [Stagiaire] vont en A, les lignes [Formatrice] en B ou C.\n"
     "- Chaque élément : « texte » = reformulation professionnelle courte (une phrase), "
-    "« extrait » = citation EXACTE, mot pour mot, de 5 à 25 mots, copiée de la transcription ou des notes.\n"
+    "« extrait » = citation EXACTE, mot pour mot, de 5 à 15 mots, copiée de la transcription ou des notes.\n"
     "- Les notes de la formatrice sont une source valable pour B et C.\n"
     "- N'ajoute aucun élément qui ne figure pas dans les sources. Une rubrique sans élément reste une liste vide.\n"
+    "- Au maximum 4 éléments par rubrique : garde les plus importants. Extraits de 5 à 15 mots.\n"
     "- Pas de doublon d'une rubrique à l'autre.\n"
 )
 
@@ -380,11 +383,12 @@ def analyse_reflexive(cfg: dict, visit: dict, grille: str, progress=lambda p, m=
         progress(0.1, "Analyse de l'entretien…")
         user = (
             contexte + f"TRANSCRIPTION DE L'ENTRETIEN :\n{morceaux[0]}\n\n" + CONSIGNE_ANALYSE
-            + "\nRédige enfin D : un bilan réflexif de 10 à 15 lignes, rédigé, structuré (séance observée, "
+            + "\nRédige enfin D : un bilan réflexif de 8 à 12 lignes, rédigé, structuré (séance observée, "
             "analyse de la stagiaire, points d'appui, axes de progrès, conseils), uniquement à partir des "
             "éléments ci-dessus.\n\nRéponds en JSON."
         )
-        res = llm.chat_json(cfg, SYSTEME, user, _schema_analyse(True))
+        res = llm.chat_json(cfg, SYSTEME, user, _schema_analyse(True), attendu=6500,
+                            progress=lambda f, m: progress(0.1 + 0.85 * f, m))
     else:
         partiels = []
         for i, m in enumerate(morceaux):
@@ -393,9 +397,12 @@ def analyse_reflexive(cfg: dict, visit: dict, grille: str, progress=lambda p, m=
                 contexte + f"TRANSCRIPTION (partie {i + 1} sur {len(morceaux)}) :\n{m}\n\n" + CONSIGNE_ANALYSE
                 + "\nRéponds en JSON."
             )
-            partiels.append(llm.chat_json(cfg, SYSTEME, user, _schema_analyse(False)))
+            partiels.append(llm.chat_json(
+                cfg, SYSTEME, user, _schema_analyse(False), attendu=4500,
+                progress=lambda f, m, i=i: progress(0.05 + 0.75 * (i + f) / len(morceaux),
+                                                    f"Partie {i + 1}/{len(morceaux)} — {m}")))
         progress(0.85, "Fusion et bilan…")
-        res = _fusionner(cfg, partiels, grille, notes)
+        res = _fusionner(cfg, partiels, grille, notes, progress)
 
     return _nettoyer_analyse(res, sources=trans + "\n" + notes)
 
@@ -403,7 +410,7 @@ def analyse_reflexive(cfg: dict, visit: dict, grille: str, progress=lambda p, m=
 SCHEMA_FUSION = {"type": "object", "properties": {"D": {"type": "string"}, "doublons": {"type": "array", "items": {"type": "string"}}}, "required": ["D", "doublons"]}
 
 
-def _fusionner(cfg, partiels, grille, notes):
+def _fusionner(cfg, partiels, grille, notes, progress=lambda p, m="": None):
     res = {g: {k: [] for k in keys} for g, keys in CLES.items()}
     for p in partiels:
         for g, keys in CLES.items():
@@ -424,11 +431,12 @@ def _fusionner(cfg, partiels, grille, notes):
     user = (
         f"GRILLE :\n{grille}\n\n" + (f"NOTES DE LA FORMATRICE :\n{notes}\n\n" if notes else "")
         + f"ÉLÉMENTS RELEVÉS DANS L'ENTRETIEN :\n{resume}\n\n"
-        "Rédige D : un bilan réflexif de 10 à 15 lignes, rédigé, structuré (séance observée, analyse de la "
+        "Rédige D : un bilan réflexif de 8 à 12 lignes, rédigé, structuré (séance observée, analyse de la "
         "stagiaire, points d'appui, axes de progrès, conseils), uniquement à partir de ces éléments. "
         "Laisse « doublons » vide.\n\nRéponds en JSON."
     )
-    out = llm.chat_json(cfg, SYSTEME, user, SCHEMA_FUSION)
+    out = llm.chat_json(cfg, SYSTEME, user, SCHEMA_FUSION, attendu=1500,
+                        progress=lambda f, m: progress(0.85 + 0.13 * f, "Bilan réflexif — " + m))
     res["D"] = out.get("D", "")
     return res
 
@@ -493,7 +501,7 @@ def legendes_photos(visit: dict) -> str:
     return ("Photos prises pendant la séance : " + " ; ".join(leg) + ".") if leg else ""
 
 
-def preremplir_bulletin(cfg: dict, visit: dict, grille: str) -> dict:
+def preremplir_bulletin(cfg: dict, visit: dict, grille: str, progress=lambda p, m="": None) -> dict:
     adm = visit.get("admin", {})
     docs = resume_documents(visit.get("documents", []))
     notes = ((visit.get("notes_formatrice") or "") + "\n" + legendes_photos(visit)).strip()
@@ -526,7 +534,8 @@ def preremplir_bulletin(cfg: dict, visit: dict, grille: str) -> dict:
         "N'écris jamais de note, de positionnement (TI, I, S, TS) ni d'appréciation chiffrée : c'est la formatrice "
         "qui décide. N'invente rien.\n\nRéponds en JSON."
     )
-    res = llm.chat_json(cfg, SYSTEME, user, SCHEMA_BULLETIN)
+    res = llm.chat_json(cfg, SYSTEME, user, SCHEMA_BULLETIN, attendu=3500,
+                        progress=lambda f, m: progress(0.05 + 0.93 * f, m))
     points = [
         {"titre": str(p.get("titre", "")).strip(), "analyse": str(p.get("analyse", "")).strip(),
          "ressources": str(p.get("ressources", "")).strip()}

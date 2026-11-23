@@ -10,9 +10,18 @@ Internet ne sert qu'une fois, à l'installation (téléchargement des modèles).
 ## Installation (une seule fois, avec Internet)
 
 1. Copier le dossier `visites-stagiaires` sur le Mac (par exemple dans *Documents*).
-2. Clic droit sur `installer.command` → **Ouvrir** → **Ouvrir**.
-   (La première fois, macOS demande une confirmation, car le fichier ne vient pas de l'App Store.)
-3. Attendre le message « Installation terminée » (15 à 40 min).
+2. Double-cliquer sur `installer.command`. macOS (Sequoia) affiche « Élément non ouvert » :
+   cliquer sur **Terminé** (surtout pas « Placer dans la corbeille »).
+3. Ouvrir **Réglages Système → Confidentialité et sécurité**, descendre tout en bas, cliquer sur
+   **Ouvrir quand même** à côté de « installer.command », taper le mot de passe du Mac.
+4. Attendre le message « Installation terminée » (15 à 40 min la première fois, 2 min pour une mise à jour).
+
+L'installateur crée l'appli **« Visites stagiaires »** avec son icône : dans le Dock, sur le Bureau
+et dans Applications. Pour l'ouvrir ensuite : un clic sur l'icône. Pour la fermer : fermer la
+fenêtre du Terminal.
+
+**Mise à jour** : remplacer le dossier `visites-stagiaires` par la nouvelle version, puis relancer
+`installer.command` (mêmes étapes). Les visites déjà faites sont conservées.
 
 L'installateur choisit l'IA selon la mémoire du Mac :
 

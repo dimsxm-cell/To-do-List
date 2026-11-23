@@ -136,6 +136,24 @@ class Transcriber:
         self.prompt = prompt
         self._fw = None
 
+    def release(self):
+        """Libère la mémoire occupée par le modèle de transcription."""
+        import gc
+
+        self._fw = None
+        if self.engine == "mlx":
+            try:
+                from mlx_whisper.transcribe import ModelHolder
+
+                ModelHolder.model = None
+                ModelHolder.model_path = None
+                import mlx.core as mx
+
+                (getattr(mx, "clear_cache", None) or mx.metal.clear_cache)()
+            except Exception:
+                pass
+        gc.collect()
+
     def _load_fw(self):
         if self._fw is None:
             from faster_whisper import WhisperModel

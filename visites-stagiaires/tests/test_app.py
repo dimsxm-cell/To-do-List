@@ -141,7 +141,7 @@ def test_analyse_avec_ia_simulee(monkeypatch):
     ]
     vu = {}
 
-    def fake(cfg, system, user, schema, timeout=0):
+    def fake(cfg, system, user, schema, timeout=0, **kw):
         vu["user"] = user
         return json.loads(json.dumps(reponse))
 
@@ -343,3 +343,41 @@ def test_legendes_transmises_a_l_ia():
     v = {"photos": [{"legende": "Trace écrite : ovipare / vivipare"}, {"legende": ""}]}
     assert legendes_photos(v) == "Photos prises pendant la séance : Trace écrite : ovipare / vivipare."
     assert legendes_photos({"photos": []}) == ""
+
+
+def test_ia_reponse_au_fil_de_l_eau():
+    """Simule Ollama qui écrit sa réponse morceau par morceau (format NDJSON)."""
+    import http.server
+    import threading
+
+    from app import llm
+
+    reponse = json.dumps({"D": "Bilan rédigé par morceaux.", "liste": ["a", "b"]})
+    morceaux = [reponse[i:i + 7] for i in range(0, len(reponse), 7)]
+    recu = {}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            recu["payload"] = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.end_headers()
+            for m in morceaux:
+                self.wfile.write((json.dumps({"message": {"content": m}, "done": False}) + "\n").encode())
+                self.wfile.flush()
+            self.wfile.write((json.dumps({"message": {"content": ""}, "done": True}) + "\n").encode())
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    etapes = []
+    try:
+        cfg = {"url": f"http://127.0.0.1:{srv.server_port}", "modele": "test"}
+        res = llm.chat_json(cfg, "s", "u", {"type": "object"}, progress=lambda f, m: etapes.append((f, m)), attendu=10)
+    finally:
+        srv.shutdown()
+    assert res == {"D": "Bilan rédigé par morceaux.", "liste": ["a", "b"]}
+    assert recu["payload"]["stream"] is True and recu["payload"]["keep_alive"] == "30m"
+    assert etapes and etapes[0][1].startswith("L'IA lit")

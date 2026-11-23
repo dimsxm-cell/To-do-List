@@ -233,7 +233,10 @@ def analyser_documents(vid: str):
             raise ValueError("Aucun document lisible à analyser.")
         for i, d in enumerate(docs):
             progress(i / len(docs), f"Lecture de « {d['nom']} »…")
-            res = analysis.analyser_document(cfg, d["texte"], d["nom"], d["type"])
+            res = analysis.analyser_document(
+                cfg, d["texte"], d["nom"], d["type"],
+                progress=lambda f, m, i=i, d=d: progress((i + f) / len(docs), f"« {d['nom']} » — {m}"),
+            )
 
             def apply(v, d=d, res=res):
                 for x in v["documents"]:
@@ -463,6 +466,8 @@ def transcrire(vid: str, data: dict = Body(default={})):
                 storage.update_visit(vid, apply)
             offset += len(samples) / audio.SR
             fait += a.get("duree") or len(samples) / audio.SR
+        # On libère la mémoire de Whisper : l'IA de rédaction en aura besoin juste après.
+        tr.release()
         if not storage.get_visit(vid)["transcription"]["segments"]:
             raise ValueError(
                 "Aucune parole n'a été détectée dans l'enregistrement. Réécoutez-le (étape Entretien) "
@@ -542,8 +547,7 @@ def analyser(vid: str):
 @app.post("/api/visites/{vid}/preremplir")
 def preremplir(vid: str):
     def work(s, progress):
-        progress(0.1, "Rédaction des rubriques du bulletin…")
-        res = analysis.preremplir_bulletin(s["ia"], storage.get_visit(vid), s["grille"])
+        res = analysis.preremplir_bulletin(s["ia"], storage.get_visit(vid), s["grille"], progress)
 
         def apply(v):
             b = v["bulletin"]

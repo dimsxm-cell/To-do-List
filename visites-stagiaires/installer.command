@@ -6,6 +6,8 @@
 set -u
 cd "$(dirname "$0")" || exit 1
 DOSSIER="$(pwd)"
+# macOS a déjà demandé l'accord pour ce fichier : on retire le blocage des autres fichiers du dossier.
+xattr -dr com.apple.quarantine "$DOSSIER" 2>/dev/null || true
 
 titre() { printf "\n\033[1;34m== %s\033[0m\n" "$1"; }
 ok()    { printf "\033[0;32m   ✓ %s\033[0m\n" "$1"; }
@@ -103,16 +105,32 @@ storage.save_settings(s)
 print("   Données rangées dans :", storage.data_dir())
 EOF
 chmod +x "$DOSSIER/lancer.command"
-RACCOURCI="$HOME/Desktop/Visites stagiaires.command"
-cat > "$RACCOURCI" <<EOF
-#!/bin/bash
-exec "$DOSSIER/lancer.command"
-EOF
-chmod +x "$RACCOURCI"
-ok "Raccourci créé sur le Bureau : « Visites stagiaires »"
+# Une vraie appli avec son icône : dans Applications, sur le Bureau et dans le Dock.
+APP="$HOME/Applications/Visites stagiaires.app"
+mkdir -p "$HOME/Applications"
+rm -rf "$APP"
+if osacompile -o "$APP" -e "tell application \"Terminal\"
+  activate
+  do script \"exec '$DOSSIER/lancer.command'\"
+end tell"; then
+  cp "$DOSSIER/app/static/icone.icns" "$APP/Contents/Resources/applet.icns" 2>/dev/null || true
+  touch "$APP"
+  rm -f "$HOME/Desktop/Visites stagiaires.command" "$HOME/Desktop/Visites stagiaires"
+  ln -s "$APP" "$HOME/Desktop/Visites stagiaires"
+  if ! defaults read com.apple.dock persistent-apps 2>/dev/null | grep -q "Visites%20stagiaires.app"; then
+    defaults write com.apple.dock persistent-apps -array-add "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>file://${APP// /%20}/</string><key>_CFURLStringType</key><integer>15</integer></dict></dict></dict>"
+    killall Dock 2>/dev/null || true
+  fi
+  ok "Appli « Visites stagiaires » créée : dans le Dock, sur le Bureau et dans Applications"
+else
+  # Plan B : l'ancien raccourci, qui marche toujours
+  printf '#!/bin/bash\nexec "%s/lancer.command"\n' "$DOSSIER" > "$HOME/Desktop/Visites stagiaires.command"
+  chmod +x "$HOME/Desktop/Visites stagiaires.command"
+  alerte "Icône non créée : utilisez le raccourci « Visites stagiaires » sur le Bureau."
+fi
 
 printf "\n\033[1;32mInstallation terminée.\033[0m\n"
-echo "Pour ouvrir l'application : double-cliquez sur « Visites stagiaires » sur le Bureau."
+echo "Pour ouvrir l'application : cliquez sur l'icône « Visites stagiaires » dans le Dock (ou sur le Bureau)."
 echo "À partir de maintenant, Internet n'est plus nécessaire."
 echo
 echo "Appuyez sur Entrée pour ouvrir l'application maintenant."

@@ -1006,7 +1006,8 @@ function followJob(job) {
   const draw = (j) => {
     const z = $("#jobZone");
     if (!z) return;
-    z.innerHTML = `<div class="tache"><div class="msg">${esc(LIB[j.type] || "Traitement")} — ${esc(j.message)}</div>
+    const min = j.debut ? Math.floor((Date.now() - new Date(j.debut).getTime()) / 60000) : 0;
+    z.innerHTML = `<div class="tache"><div class="msg">${esc(LIB[j.type] || "Traitement")} — ${esc(j.message)}${min >= 1 ? ` <span class="muted small">(depuis ${min} min)</span>` : ""}</div>
       <div class="barre"><div style="width:${Math.round(j.progression * 100)}%"></div></div>
       <div class="muted small" style="margin-top:6px">Vous pouvez continuer à travailler sur d'autres étapes. Laissez l'application ouverte.</div></div>`;
     $$("#panneau button.btn.primaire, #transcrire, #locuteurs, #corriger, #recommencer").forEach((b) => (b.disabled = true));
