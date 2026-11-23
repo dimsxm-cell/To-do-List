@@ -91,6 +91,14 @@ def test_detection_type_documents():
     seq = "Fiche de séquence\nSéance 1 : découverte\nSéance 2 : entraînement\nSéance 3 : réinvestissement\nÉvaluation finale"
     assert guess_type(seq, "doc.docx") == "sequence"
     assert guess_type("Liste des élèves de la classe", "eleves.docx") == "autre"
+    # Trames INSPE (titres réels), sans indice dans le nom du fichier
+    trame_seq = ("Fiche de préparation de séquence\nTitre de la séquence : Le cycle de vie | Niveau : CE2 | "
+                 "Nombre de séances envisagées : 5 séances (40-45 min)\nSéance 1 | Séance 2 | Séance 3 | Phase | 10 min")
+    trame_sea = ("Fiche de préparation de séance\nTitre de la séquence : Le cycle de vie | Niveau : CE2 | Séance n° 2 sur 5\n"
+                 "Phases possibles | Durée | Consignes | 3 min | mise en commun | Séance 1")
+    assert guess_type(trame_seq, "doc1.docx") == "sequence"
+    assert guess_type(trame_sea, "doc2.docx") == "seance"
+    assert guess_type("Séquence d'apprentissage en arts visuels\nSéance 1\nSéance 2\nSéance 3\n20 min", "a.pdf") == "sequence"
 
 
 # ------------------------------------------------------------------ IA : sécurité et anti-invention

@@ -90,14 +90,24 @@ def guess_type(text: str, filename: str = "") -> str:
     n_seances = len(set(re.findall(r"s[ée]ance\s*(?:n°|no|n)?\s*(\d{1,2})", t)))
     score_seq = 0
     score_sea = 0
-    if re.search(r"fiche\s+(de\s+)?s[ée]quence|plan\s+de\s+s[ée]quence|s[ée]quence\s+d.apprentissage", t):
+    # Titre du document (trames INSPE : « Fiche de préparation de séquence / de séance »)
+    debut = t[:400]
+    if re.search(r"(fiche|pr[ée]paration|plan)\s+(de\s+)?(pr[ée]paration\s+de\s+)?(la\s+)?s[ée]quence|s[ée]quence\s+d.apprentissage", debut):
+        score_seq += 5
+    if re.search(r"(fiche|pr[ée]paration)\s+(de\s+)?(pr[ée]paration\s+de\s+)?(la\s+)?s[ée]ance", debut):
+        score_sea += 5
+    if re.search(r"nombre\s+de\s+s[ée]ances", t):
         score_seq += 3
+    if re.search(r"s[ée]ance\s*(n°|no)?\s*\d{1,2}\s*(sur|/)\s*\d{1,2}", t):
+        score_sea += 3  # « Séance n° 2 sur 5 » : on est dans UNE séance d'une séquence
+    if re.search(r"fiche\s+(de\s+)?s[ée]quence|plan\s+de\s+s[ée]quence", t):
+        score_seq += 2
     if n_seances >= 3:
         score_seq += 3
     if re.search(r"t[âa]che\s+finale|[ée]valuation\s+(finale|sommative)", t):
         score_seq += 1
-    if re.search(r"fiche\s+(de\s+)?(s[ée]ance|pr[ée]paration)|pr[ée]paration\s+de\s+s[ée]ance", t):
-        score_sea += 3
+    if re.search(r"fiche\s+(de\s+)?s[ée]ance|pr[ée]paration\s+de\s+s[ée]ance", t):
+        score_sea += 2
     if re.search(r"\b\d{1,2}\s*(min|mn|')", t):
         score_sea += 2
     if re.search(r"d[ée]roulement|phase|consigne|mise\s+en\s+commun|institutionnalisation", t):
