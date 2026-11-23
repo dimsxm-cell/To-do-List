@@ -106,7 +106,9 @@ async function pageAccueil() {
   const etapeLib = Object.fromEntries(ETAPES);
   app.innerHTML = `
     <div class="accueil-tete">
-      <div><h1>Bonjour</h1><div class="muted">Préparez, enregistrez et rédigez vos visites. Tout reste sur ce Mac.</div></div>
+      <div><h1>Vos visites, <span class="accent">simplement</span>.</h1>
+        <div class="muted">Préparez, enregistrez l'entretien, et obtenez un bulletin prérempli.</div>
+        <div class="pills"><span class="pill">Tout reste sur ce Mac</span><span class="pill">Fonctionne sans Internet</span><span class="pill rose">Aidé par l'IA, validé par vous</span></div></div>
       <span class="espace"></span>
       <button class="btn primaire gros" id="nouvelle">+ Nouvelle visite</button>
     </div>
@@ -490,17 +492,20 @@ function stepEntretien(p) {
   p.innerHTML = `
     <div class="carte"><h2>Enregistrer l'entretien</h2>
       <div class="aide">Posez le Mac entre vous deux, branché sur secteur, couvercle ouvert. L'enregistrement est sauvegardé sur le Mac toutes les 5 secondes : rien n'est perdu en cas de souci.</div>
-      <div class="enregistreur">
-        <span class="voyant" id="voyant"></span>
+      <div class="micro-zone">
+        <button class="micro" id="micro" aria-label="Démarrer l'enregistrement">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.5" width="6" height="12" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3.5"/></svg>
+        </button>
+        <div class="micro-etat" id="microEtat">Touchez le micro pour démarrer</div>
         <span class="chrono" id="chrono">00:00</span>
-        <div><div class="niveau"><div id="niveau"></div></div><div class="muted small" style="margin-top:4px">niveau du micro</div></div>
-        <span class="espace"></span>
-        <button class="btn primaire gros" id="recStart">● Démarrer</button>
-        <button class="btn gros" id="recPause" hidden>❚❚ Pause</button>
-        <button class="btn gros" id="recResume" hidden>▶ Reprendre</button>
-        <button class="btn gros danger" id="recStop" hidden>■ Arrêter</button>
+        <div class="niveau" title="niveau du micro"><div id="niveau"></div></div>
+        <div class="micro-boutons">
+          <button class="btn" id="recPause" hidden>❚❚ Pause</button>
+          <button class="btn" id="recResume" hidden>▶ Reprendre</button>
+          <button class="btn danger" id="recStop" hidden>■ Arrêter et sauvegarder</button>
+        </div>
+        <div id="recMsg" class="muted small center"></div>
       </div>
-      <div id="recMsg" class="muted small" style="margin-top:8px"></div>
     </div>
     ${orphelins.length ? `<div class="alerte">Un enregistrement a été interrompu (fenêtre fermée ?). Le son déjà capté est conservé.
       ${orphelins.map((a) => `<button class="btn mini" data-recup="${a.id}">Récupérer « ${esc(a.nom)} »</button>`).join(" ")}</div>` : ""}
@@ -518,9 +523,17 @@ function stepEntretien(p) {
     </div>`;
   if (recActif) S.rec.attach();
   else majBoutonsRec("stop");
-  $("#recStart").onclick = () => demarrerEnregistrement(v.id);
-  $("#recPause").onclick = () => { S.rec.mr.pause(); S.rec.pause(); majBoutonsRec("pause"); };
-  $("#recResume").onclick = () => { S.rec.mr.resume(); S.rec.resume(); majBoutonsRec("rec"); };
+  const pause = () => { S.rec.mr.pause(); S.rec.pause(); majBoutonsRec("pause"); };
+  const reprendre = () => { S.rec.mr.resume(); S.rec.resume(); majBoutonsRec("rec"); };
+  // Le gros micro : démarre, met en pause, ou reprend selon l'état.
+  $("#micro").onclick = () => {
+    if (!S.rec) return demarrerEnregistrement(v.id);
+    if (S.rec.vid !== v.id) return;
+    if (S.rec.mr.state === "recording") pause();
+    else if (S.rec.mr.state === "paused") reprendre();
+  };
+  $("#recPause").onclick = pause;
+  $("#recResume").onclick = reprendre;
   $("#recStop").onclick = () => S.rec.stop();
   $("#importAudio").onchange = async (e) => {
     const f = e.target.files[0];
@@ -548,10 +561,14 @@ function stepEntretien(p) {
 }
 
 function majBoutonsRec(mode) {
-  const show = { stop: ["recStart"], rec: ["recPause", "recStop"], pause: ["recResume", "recStop"] }[mode];
-  ["recStart", "recPause", "recResume", "recStop"].forEach((id) => { const b = $("#" + id); if (b) b.hidden = !show.includes(id); });
-  const voy = $("#voyant"), chrono = $("#chrono");
-  if (voy) voy.className = "voyant " + (mode === "stop" ? "" : mode);
+  const show = { stop: [], rec: ["recPause", "recStop"], pause: ["recResume", "recStop"] }[mode];
+  ["recPause", "recResume", "recStop"].forEach((id) => { const b = $("#" + id); if (b) b.hidden = !show.includes(id); });
+  const micro = $("#micro"), etat = $("#microEtat"), chrono = $("#chrono");
+  if (micro) {
+    micro.className = "micro " + (mode === "stop" ? "" : mode);
+    micro.setAttribute("aria-label", { stop: "Démarrer l'enregistrement", rec: "Mettre en pause", pause: "Reprendre" }[mode]);
+  }
+  if (etat) etat.textContent = { stop: "Touchez le micro pour démarrer", rec: "Enregistrement en cours", pause: "En pause : touchez le micro pour reprendre" }[mode];
   if (chrono) chrono.classList.toggle("rec", mode === "rec");
 }
 
