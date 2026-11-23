@@ -274,3 +274,72 @@ def test_acces_refuse_depuis_un_autre_site(client):
     assert r.status_code == 403
     r = client.get("/api/visites", headers={"Host": "192.168.1.20:8765"})
     assert r.status_code == 403
+
+
+# ------------------------------------------------------------------ photos de la séance
+
+def _image_bytes(fmt="JPEG", size=(400, 300), orientation=None):
+    from PIL import Image
+
+    im = Image.new("RGB", size, (200, 120, 160))
+    buf = io.BytesIO()
+    kw = {}
+    if orientation:
+        exif = Image.Exif()
+        exif[0x0112] = orientation
+        kw["exif"] = exif
+    im.save(buf, fmt, **kw)
+    return buf.getvalue()
+
+
+def test_photos_import_legende_et_export(client):
+    v = client.post("/api/visites", json={"admin": {"stagiaire_nom": "TEST Photo"}}).json()
+    vid = v["id"]
+    files = [
+        ("fichiers", ("tableau.jpg", _image_bytes())),
+        # Photo prise téléphone tourné : l'orientation EXIF 6 doit être appliquée (400x300 -> 300x400)
+        ("fichiers", ("eleve.jpg", _image_bytes(orientation=6))),
+        ("fichiers", ("note.txt", b"pas une image")),
+    ]
+    r = client.post(f"/api/visites/{vid}/photos", files=files).json()
+    ph = r["visite"]["photos"]
+    assert len(ph) == 2 and len(r["erreurs"]) == 1
+    assert (ph[1]["largeur"], ph[1]["hauteur"]) == (300, 400)
+    assert client.get(f"/api/visites/{vid}/photos/{ph[0]['id']}").headers["content-type"] == "image/jpeg"
+
+    client.patch(f"/api/visites/{vid}/photos/{ph[0]['id']}", json={"legende": "Trace écrite au tableau"})
+    v = client.patch(f"/api/visites/{vid}/photos/{ph[1]['id']}", json={"ordre": [ph[1]["id"], ph[0]["id"]]}).json()
+    assert [p["id"] for p in v["photos"]] == [ph[1]["id"], ph[0]["id"]]
+
+    out = client.post(f"/api/visites/{vid}/exporter", json={"types": ["synthese", "bilan", "bulletin_docx"]}).json()
+    from app import storage
+    edir = storage.visit_dir(vid) / "exports"
+    synthese = docx.Document(str(edir / out["fichiers"][0]))
+    assert len(synthese.inline_shapes) == 2
+    assert "Trace écrite au tableau" in _texte_docx(edir / out["fichiers"][0])
+    assert len(docx.Document(str(edir / out["fichiers"][1])).inline_shapes) == 2
+    # Le bulletin officiel ne reçoit pas les photos (seulement les 3 images d'origine du modèle)
+    assert len(docx.Document(str(edir / out["fichiers"][2])).inline_shapes) == 3
+
+    v = client.delete(f"/api/visites/{vid}/photos/{ph[0]['id']}").json()
+    assert len(v["photos"]) == 1
+
+
+def test_photo_heic_iphone(client):
+    import pillow_heif
+    from PIL import Image
+
+    pillow_heif.register_heif_opener()
+    buf = io.BytesIO()
+    Image.new("RGB", (320, 240), (10, 120, 60)).save(buf, "HEIF")
+    v = client.post("/api/visites", json={"admin": {"stagiaire_nom": "TEST Heic"}}).json()
+    r = client.post(f"/api/visites/{v['id']}/photos", files=[("fichiers", ("IMG_0001.HEIC", buf.getvalue()))]).json()
+    assert not r["erreurs"] and r["visite"]["photos"][0]["fichier"].endswith(".jpg")
+
+
+def test_legendes_transmises_a_l_ia():
+    from app.analysis import legendes_photos
+
+    v = {"photos": [{"legende": "Trace écrite : ovipare / vivipare"}, {"legende": ""}]}
+    assert legendes_photos(v) == "Photos prises pendant la séance : Trace écrite : ovipare / vivipare."
+    assert legendes_photos({"photos": []}) == ""

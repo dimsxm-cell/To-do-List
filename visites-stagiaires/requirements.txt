@@ -9,3 +9,6 @@ faster-whisper>=1.1
 huggingface_hub>=0.24
 # Transcription accélérée sur les Mac à puce Apple (M1, M2, M3, M4…)
 mlx-whisper>=0.4; sys_platform == "darwin" and platform_machine == "arm64"
+# Photos de la séance (dont HEIC de l'iPhone)
+pillow>=10
+pillow-heif>=0.16

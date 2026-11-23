@@ -161,7 +161,7 @@ def create_visit(admin: dict | None = None) -> dict:
             v["admin"]["formateurs"] = [dict(settings["formatrice"])]
         if not v["admin"]["lieu"] and settings["formatrice"].get("lieu"):
             v["admin"]["lieu"] = settings["formatrice"]["lieu"]
-        for sub in ("audio", "documents", "exports"):
+        for sub in ("audio", "documents", "photos", "exports"):
             (visit_dir(vid) / sub).mkdir(parents=True, exist_ok=True)
         _write_json(visit_dir(vid) / "visite.json", v)
         return v

@@ -12,7 +12,7 @@ from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, analysis, audio, bulletin, documents, exports, jobs, llm, storage
+from . import __version__, analysis, audio, bulletin, documents, exports, jobs, llm, photos, storage
 from .defaults import OUTILS
 
 STATIC = Path(__file__).parent / "static"
@@ -244,6 +244,68 @@ def analyser_documents(vid: str):
             storage.update_visit(vid, apply)
 
     return jobs.start("documents", vid, run)
+
+
+# ------------------------------------------------------------------ photos de la séance
+
+@app.post("/api/visites/{vid}/photos")
+async def post_photos(vid: str, fichiers: list[UploadFile] = File(...)):
+    pdir = storage.visit_dir(vid) / "photos"
+    pdir.mkdir(parents=True, exist_ok=True)
+    ajoutees, erreurs = [], []
+    for f in fichiers:
+        name = Path(f.filename or "photo").name
+        ext = Path(name).suffix.lower()
+        if ext not in photos.EXTENSIONS:
+            erreurs.append(f"{name} : ce n'est pas une photo reconnue (JPEG, PNG, HEIC…).")
+            continue
+        pid = uuid.uuid4().hex[:8]
+        brut = pdir / f"brut-{pid}{ext}"
+        brut.write_bytes(await f.read())
+        try:
+            largeur, hauteur = photos.preparer(brut, pdir / f"{pid}.jpg")
+            brut.unlink(missing_ok=True)
+        except Exception:
+            brut.unlink(missing_ok=True)
+            erreurs.append(f"{name} : photo illisible.")
+            continue
+        ajoutees.append({
+            "id": pid, "fichier": f"{pid}.jpg", "nom": name, "legende": "",
+            "largeur": largeur, "hauteur": hauteur, "cree": datetime.now().isoformat(timespec="seconds"),
+        })
+    v = storage.update_visit(vid, lambda v: v["photos"].extend(ajoutees))
+    return {"visite": v, "erreurs": erreurs}
+
+
+@app.patch("/api/visites/{vid}/photos/{pid}")
+def patch_photo(vid: str, pid: str, data: dict = Body(...)):
+    def apply(v):
+        for p in v["photos"]:
+            if p["id"] == pid and "legende" in data:
+                p["legende"] = str(data["legende"])[:300]
+        if "ordre" in data:  # liste d'identifiants dans le nouvel ordre
+            rang = {i: n for n, i in enumerate(data["ordre"])}
+            v["photos"].sort(key=lambda p: rang.get(p["id"], 999))
+    return storage.update_visit(vid, apply)
+
+
+@app.delete("/api/visites/{vid}/photos/{pid}")
+def delete_photo(vid: str, pid: str):
+    def apply(v):
+        for p in v["photos"]:
+            if p["id"] == pid:
+                (storage.visit_dir(vid) / "photos" / p["fichier"]).unlink(missing_ok=True)
+        v["photos"] = [p for p in v["photos"] if p["id"] != pid]
+    return storage.update_visit(vid, apply)
+
+
+@app.get("/api/visites/{vid}/photos/{pid}")
+def get_photo(vid: str, pid: str):
+    v = storage.get_visit(vid)
+    p = next((x for x in v["photos"] if x["id"] == pid), None)
+    if not p:
+        raise HTTPException(404, "Photo introuvable.")
+    return FileResponse(storage.visit_dir(vid) / "photos" / p["fichier"], media_type="image/jpeg")
 
 
 # ------------------------------------------------------------------ audio

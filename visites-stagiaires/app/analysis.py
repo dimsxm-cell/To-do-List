@@ -365,6 +365,9 @@ def analyse_reflexive(cfg: dict, visit: dict, grille: str, progress=lambda p, m=
     if not trans and not notes:
         raise llm.IAIndisponible("Il n'y a ni transcription ni notes à analyser.")
 
+    legendes = legendes_photos(visit)
+    if legendes:
+        notes = (notes + "\n" + legendes).strip()
     contexte = (
         f"GRILLE ET ATTENTES DE LA FORMATRICE :\n{grille}\n\n"
         + (f"DOCUMENTS DE LA STAGIAIRE (pour comprendre la séance, pas comme source de propos) :\n{docs[:6000]}\n\n" if docs else "")
@@ -484,10 +487,16 @@ def analyse_en_texte(analyse: dict) -> str:
     return "\n".join(lines)
 
 
+def legendes_photos(visit: dict) -> str:
+    """Les légendes des photos de la séance, écrites par la formatrice, sont des observations."""
+    leg = [p.get("legende", "").strip() for p in visit.get("photos", []) if p.get("legende", "").strip()]
+    return ("Photos prises pendant la séance : " + " ; ".join(leg) + ".") if leg else ""
+
+
 def preremplir_bulletin(cfg: dict, visit: dict, grille: str) -> dict:
     adm = visit.get("admin", {})
     docs = resume_documents(visit.get("documents", []))
-    notes = (visit.get("notes_formatrice") or "").strip()
+    notes = ((visit.get("notes_formatrice") or "") + "\n" + legendes_photos(visit)).strip()
     ana = analyse_en_texte(visit.get("analyse", {}))
     trans = transcript_text(visit.get("transcription", {}).get("segments", []))
     if not (docs or notes or ana or trans):

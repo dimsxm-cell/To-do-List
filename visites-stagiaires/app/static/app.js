@@ -447,7 +447,51 @@ function stepDocuments(p) {
           ${d.texte ? `<details><summary class="small muted">Voir le texte extrait (${d.texte.length} caractères)</summary><pre>${esc(d.texte)}</pre></details>` : ""}
         </div>`).join("")}
       ${v.documents.some((d) => d.texte) ? `<div class="ligne" style="margin-top:14px"><button class="btn primaire" id="analyserDocs">${v.documents.some((d) => d.analyse) ? "Relire" : "Lire"} les documents avec l'IA</button><span class="muted small">extrait objectifs, compétences et déroulement prévu</span></div>` : ""}
+    </div>
+    <div class="carte"><h2>Photos de la séance</h2>
+      <div class="aide">Tableau, productions d'élèves, affichages… Les photos illustrent le bilan réflexif et la synthèse (pas le bulletin officiel). Ajoutez une courte légende à chacune. Évitez les visages d'élèves.</div>
+      <label class="depot" id="depotPhotos">
+        <input type="file" id="fichiersPhotos" multiple accept="image/*,.heic,.heif" hidden>
+        <b>Glissez les photos ici</b> ou cliquez pour les choisir<br><span class="muted small">JPEG, PNG, HEIC (iPhone)</span>
+      </label>
+      <div class="photos">${(v.photos || []).map((ph, i) => `
+        <figure class="photo">
+          <img src="/api/visites/${v.id}/photos/${ph.id}" alt="${esc(ph.legende || ph.nom)}" loading="lazy">
+          <input type="text" data-legende="${ph.id}" value="${esc(ph.legende)}" placeholder="Légende (ex. : trace écrite au tableau)">
+          <div class="ligne">
+            ${i > 0 ? `<button class="btn mini" data-monter="${ph.id}" title="Avancer">←</button>` : ""}
+            <span class="espace"></span>
+            <button class="btn mini danger" data-suppr-photo="${ph.id}">Retirer</button>
+          </div>
+        </figure>`).join("")}</div>
     </div>`;
+  const depotP = $("#depotPhotos"), inputP = $("#fichiersPhotos");
+  inputP.onchange = () => envoyerPhotos(inputP.files);
+  ["dragenter", "dragover"].forEach((ev) => depotP.addEventListener(ev, (e) => { e.preventDefault(); depotP.classList.add("survol"); }));
+  ["dragleave", "drop"].forEach((ev) => depotP.addEventListener(ev, (e) => { e.preventDefault(); depotP.classList.remove("survol"); }));
+  depotP.addEventListener("drop", (e) => envoyerPhotos(e.dataTransfer.files));
+  async function envoyerPhotos(files) {
+    if (!files.length) return;
+    const fd = new FormData();
+    [...files].forEach((f) => fd.append("fichiers", f));
+    toast("Import des photos…");
+    const r = await api("POST", `/api/visites/${v.id}/photos`, fd);
+    S.visit = { ...r.visite, taches: S.visit.taches };
+    if (r.erreurs.length) toast(r.erreurs.join(" "), true); else toast("Photos ajoutées.");
+    stepDocuments(p);
+  }
+  p.oninput = (e) => {
+    const inp = e.target.closest("[data-legende]");
+    if (!inp) return;
+    clearTimeout(inp._t);
+    const el = $("#sauve");
+    if (el) el.textContent = "Enregistrement…";
+    inp._t = setTimeout(async () => {
+      S.visit = await api("PATCH", `/api/visites/${v.id}/photos/${inp.dataset.legende}`, { legende: inp.value });
+      const el = $("#sauve");
+      if (el) el.textContent = "Enregistré ✓";
+    }, 600);
+  };
   const depot = $("#depot"), input = $("#fichiers");
   input.onchange = () => upload(input.files);
   ["dragenter", "dragover"].forEach((ev) => depot.addEventListener(ev, (e) => { e.preventDefault(); depot.classList.add("survol"); }));
@@ -469,6 +513,15 @@ function stepDocuments(p) {
   p.onclick = async (e) => {
     const b = e.target.closest("[data-suppr]");
     if (b && confirm("Retirer ce document ?")) { S.visit = await api("DELETE", `/api/visites/${v.id}/documents/${b.dataset.suppr}`); stepDocuments(p); }
+    const bp = e.target.closest("[data-suppr-photo]");
+    if (bp && confirm("Retirer cette photo ?")) { S.visit = await api("DELETE", `/api/visites/${v.id}/photos/${bp.dataset.supprPhoto}`); stepDocuments(p); }
+    const bm = e.target.closest("[data-monter]");
+    if (bm) {
+      const ids = v.photos.map((x) => x.id), i = ids.indexOf(bm.dataset.monter);
+      [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
+      S.visit = await api("PATCH", `/api/visites/${v.id}/photos/${bm.dataset.monter}`, { ordre: ids });
+      stepDocuments(p);
+    }
   };
   $("#analyserDocs") && ($("#analyserDocs").onclick = () => startJob(`/api/visites/${v.id}/documents/analyser`));
 }

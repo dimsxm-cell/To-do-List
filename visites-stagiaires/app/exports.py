@@ -65,6 +65,48 @@ def _heading(d, text, size=12.5):
     return p
 
 
+def _photos(d, visit: dict, out_dir: Path) -> None:
+    """Planche des photos de la séance : 2 par ligne, légende sous chaque photo."""
+    from docx.shared import Cm
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    pdir = out_dir.parent / "photos"
+    items = [p for p in visit.get("photos", []) if (pdir / p.get("fichier", "")).exists()]
+    if not items:
+        return
+    _heading(d, "Photos de la séance")
+    table = d.add_table(rows=0, cols=2)
+    # Pas de bordures : une simple planche
+    tblpr = table._tbl.tblPr
+    borders = OxmlElement("w:tblBorders")
+    for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        el = OxmlElement(f"w:{side}")
+        el.set(qn("w:val"), "nil")
+        borders.append(el)
+    tblpr.append(borders)
+    largeur = Cm(7.8)
+    hauteur_max = Cm(7.0)
+    for i in range(0, len(items), 2):
+        cells = table.add_row().cells
+        for cell, p in zip(cells, items[i:i + 2]):
+            para = cell.paragraphs[0]
+            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            w, h = p.get("largeur") or 4, p.get("hauteur") or 3
+            run = para.add_run()
+            # On limite la hauteur des photos en portrait pour garder une planche régulière
+            if largeur * h / w > hauteur_max:
+                run.add_picture(str(pdir / p["fichier"]), height=hauteur_max)
+            else:
+                run.add_picture(str(pdir / p["fichier"]), width=largeur)
+            leg = cell.add_paragraph()
+            leg.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            leg.paragraph_format.space_after = Pt(8)
+            r = leg.add_run(p.get("legende") or "")
+            r.italic = True
+            r.font.size = Pt(9)
+
+
 def export_bulletin_docx(visit: dict, out_dir: Path) -> Path:
     return bulletin.fill_bulletin(visit, out_dir / f"{base_name(visit)}_bulletin.docx")
 
@@ -112,6 +154,7 @@ def export_bilan(visit: dict, out_dir: Path) -> Path:
                 d.add_paragraph(para.strip())
     else:
         d.add_paragraph("À compléter.").runs[0].italic = True
+    _photos(d, visit, out_dir)
     path = out_dir / f"{base_name(visit)}_bilan_reflexif.docx"
     d.save(str(path))
     return path
@@ -133,6 +176,7 @@ def export_synthese(visit: dict, out_dir: Path) -> Path:
             d.add_paragraph("Aucun élément relevé.").runs[0].italic = True
         for it in items:
             d.add_paragraph(it.get("texte", ""), style="List Bullet")
+    _photos(d, visit, out_dir)
     path = out_dir / f"{base_name(visit)}_synthese.docx"
     d.save(str(path))
     return path

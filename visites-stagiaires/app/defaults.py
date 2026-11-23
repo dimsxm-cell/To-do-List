@@ -141,6 +141,7 @@ def empty_visit(vid: str) -> dict:
         "outils": {k: False for k, _ in OUTILS},
         "notes_formatrice": "",
         "documents": [],
+        "photos": [],  # [{"id", "fichier", "legende", "largeur", "hauteur", "cree"}]
         "audios": [],
         "transcription": {"segments": [], "progression": {}, "moteur": ""},
         "analyse": copy.deepcopy(ANALYSE_VIDE),
