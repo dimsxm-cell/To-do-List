@@ -38,13 +38,18 @@ Double-cliquer sur **« Visites stagiaires »** sur le Bureau. La page s'ouvre d
 
 1. **Infos** : stagiaire, classe, école, statut, outils présentés, vos notes d'observation.
 2. **Documents** : fiche de séance, fiche de séquence, autres documents (Word ou PDF).
-3. **Entretien** : Démarrer / Pause / Reprendre / Arrêter. Sauvegarde automatique toutes les 5 s.
-   On peut aussi importer un mémo vocal de l'iPhone.
+3. **Enregistrements** : choisir « Séance 1 », « Séance 2 » ou « L'entretien », puis Démarrer / Pause /
+   Reprendre / Arrêter. Sauvegarde automatique toutes les 5 s. L'enregistrement de la séance sert à
+   rédiger un déroulement détaillé (paroles de l'enseignante « E » et des élèves). On peut aussi importer
+   un mémo vocal de l'iPhone. Attention : enregistrer une séance, c'est enregistrer des élèves mineurs ;
+   vérifier les règles de l'institution.
 4. **Transcription** : sur le Mac, sans Internet. Puis « Identifier qui parle » et
    « Corriger les fautes évidentes ». Tout est modifiable à la main ; cliquer sur l'heure pour réécouter.
 5. **Analyse** : points de la stagiaire (A), de la formatrice (B), conseils (C), bilan (D).
    Chaque point cite un extrait ; s'il est introuvable dans l'entretien, il est signalé en orange.
-6. **Bulletin** : préremplissage, relecture, positionnement et note (choix de la formatrice uniquement).
+6. **Bulletin** : préremplissage (une ou plusieurs séances observées, déroulement « observé » puis
+   « analyse et conseil », points discutés selon les focales de Bucheton), relecture, positionnement et
+   note (choix de la formatrice uniquement).
 7. **Export** : bulletin Word et PDF, transcription, bilan réflexif, synthèse.
 
 La grille d'analyse et vos attentes se règlent une fois dans **Paramètres**.

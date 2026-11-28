@@ -50,7 +50,10 @@ def test_bulletin_rempli(tmp_path):
     out = fill_bulletin(v, tmp_path / "b.docx")
     txt = _texte_docx(out)
     for attendu in ("DUPONT Camille", "20/11/2026", "CE1", "Baie-Mahault", "MARTIN Sophie, PEMF",
-                    "La consigne a été reformulée", "Éduscol", "Analyse lucide", "13 /20", "☒"):
+                    "La consigne a été reformulée", "Éduscol", "Analyse lucide", "13 /20", "☒",
+                    "Séance numéro 1 :", "Séance numéro 2 :", "Domaine ou discipline : ",
+                    "Mathématiques – résolution de problèmes", "Objectif(s) de la séance observée : ",
+                    "2ème séance – Enseignements artistiques", "Qu'est-ce que vous voyez"):
         assert attendu in txt, attendu
     # La structure du modèle est conservée : mêmes rubriques, mêmes tableaux.
     d = docx.Document(str(out))
@@ -390,48 +393,74 @@ def test_horaires_du_deroulement():
 
     d = [{"temps": "10 min – Rituel"}, {"temps": "Recherche 20 min"}, {"temps": "Mise en commun 10min"}]
     t = [r["temps"] for r in horodater(d, "14h25 - 15h10")]
-    assert t == ["14h25 – 14h35 (10 min)\nRituel", "14h35 – 14h55 (20 min)\nRecherche",
-                 "14h55 – 15h05 (10 min)\nMise en commun"]
+    # Format de la formatrice : heure de début, phase, durée
+    assert t == ["14h25 : Rituel (10 min)", "14h35 : Recherche (20 min)", "14h55 : Mise en commun (10 min)"]
     # Heures déjà notées par la formatrice : on se recale dessus
-    t = [r["temps"] for r in horodater([{"temps": "14h40 – 14h50 rituel"}, {"temps": "15 min"}], "14h25")]
-    assert t[1].startswith("14h50 – 15h05 (15 min)")
+    t = [r["temps"] for r in horodater([{"temps": "14h06 : Rappel (5 min)"}, {"temps": "Recherche (18 min)"}], "14h00")]
+    assert t == ["14h06 : Rappel (5 min)", "14h11 : Recherche (18 min)"]
     # Sans horaire, ou durée inconnue : on ne devine rien
     assert horodater([{"temps": "10 min"}], "") == [{"temps": "10 min"}]
     assert horodater([{"temps": "Rituel"}, {"temps": "10 min"}], "14h25")[0] == {"temps": "Rituel"}
 
 
+def _fake_ia(vu, seances=None, deroulements=None, bulletin=None):
+    """IA simulée qui répond selon le schéma demandé (séances, déroulement, points)."""
+    def fake(cfg, system, user, schema, timeout=0, **kw):
+        vu.append(user)
+        req = schema.get("required", [])
+        if req == ["seances"]:
+            return {"seances": seances or []}
+        if req == ["deroulement"]:
+            return {"deroulement": (deroulements or {}).get(len([u for u in vu if "SÉANCE CONCERNÉE" in u]), [])}
+        return bulletin or {"points": [], "positifs": [], "ameliorer": [], "langue_observations": "", "references": []}
+    return fake
+
+
 def test_preremplissage_references_et_horaires(monkeypatch):
     from app import analysis, llm
 
-    vu_prompt = []
-
-    def fake(cfg, system, user, schema, timeout=0, **kw):
-        vu_prompt.append(user)
-        assert "BIBLIOTHÈQUE DE RÉFÉRENCES" in user and "Photo 1 : Trace écrite" in user
-        return {
-            "enseignements": "Questionner le monde", "description": "Tri des animaux (photo 1).",
-            "deroulement": [{"temps": "10 min – Rappel", "deroulement": "a", "remarque": "Tissage réussi", "dispositif": "b", "organisation": "c"},
-                            {"temps": "25 min – Tri", "deroulement": "a", "remarque": "", "dispositif": "b", "organisation": "c"}],
-            "points": [{"titre": "Étayage – Difficultés lors du tri", "analyse": "Constat, analyse, conseil.",
-                        "ressources": "J.-P. Astolfi, L'erreur, un outil pour enseigner, ESF, 1997 ; Manuel inventé, 2030"}],
+    vu = []
+    monkeypatch.setattr(llm, "chat_json", _fake_ia(
+        vu,
+        seances=[{"domaine": "Questionner le monde – le vivant", "objectifs": "Classer les animaux", "description": "Tri (photo 1)."},
+                 {"domaine": "Enseignements artistiques – arts plastiques", "objectifs": "Déchirer du papier", "description": "Hans Arp."}],
+        deroulements={
+            1: [{"temps": "Rappel (10 min)", "deroulement": "E : « Comment naissent-ils ? »", "remarque": "Tissage réussi", "dispositif": "b", "organisation": "c"},
+                {"temps": "Tri (25 min)", "deroulement": "a", "remarque": "", "dispositif": "b", "organisation": "c"}],
+            2: [{"temps": "14h44 : Observation (8 min)", "deroulement": "E : « Qu'est-ce que vous voyez ? »", "remarque": "", "dispositif": "Collectif", "organisation": "Tablette"}],
+        },
+        bulletin={"points": [
+            {"focale": "etayage", "analyse": "Points d'appui : consigne claire.\nSupport : ajouter le nom des animaux.",
+             "ressources": "J.-P. Astolfi, L'erreur, un outil pour enseigner, ESF, 1997 ; Manuel inventé, 2030"},
+            {"focale": "etayage", "analyse": "doublon", "ressources": ""},
+            {"focale": "pilotage", "analyse": "Transitions : annoncer l'objectif.", "ressources": ""}],
             "positifs": [], "ameliorer": [], "langue_observations": "",
-            "references": ["La main à la pâte – Le vivant", "Ouvrage imaginaire de M. Personne"],
-        }
-
-    monkeypatch.setattr(llm, "chat_json", fake)
+            "references": ["La main à la pâte – Le vivant", "Ouvrage imaginaire de M. Personne"]},
+    ))
     v = {"admin": {"horaire": "9h00 – 9h45"}, "documents": [], "notes_formatrice": "Bonne séance.",
          "photos": [{"legende": "Trace écrite au tableau"}], "analyse": {},
-         "transcription": {"segments": [{"debut": 0, "fin": 1, "texte": "Regarde le site La main à la pâte sur le vivant", "locuteur": "F"}]}}
+         "audios": [{"id": "a1", "type": "seance", "seance": 1}, {"id": "a2", "type": "entretien"}],
+         "transcription": {"segments": [
+             {"debut": 0, "fin": 1, "texte": "Comment naissent les animaux ?", "locuteur": "S", "audio": "a1"},
+             {"debut": 2, "fin": 3, "texte": "Regarde le site La main à la pâte sur le vivant", "locuteur": "F", "audio": "a2"}]}}
     res = analysis.preremplir_bulletin({"contexte": 16384}, v, "grille", bibliotheque="Éduscol – Le vivant au cycle 2")
-    assert [r["temps"] for r in res["deroulement"]] == ["9h00 – 9h10 (10 min)\nRappel", "9h10 – 9h35 (25 min)\nTri"]
+    s1, s2 = res["seances"]
+    assert s1["domaine"] == "Questionner le monde – le vivant"
+    assert [r["temps"] for r in s1["deroulement"]] == ["9h00 : Rappel (10 min)", "9h10 : Tri (25 min)"]
+    assert s1["deroulement"][0]["remarque"] == "Tissage réussi"
+    assert s2["deroulement"][0]["temps"] == "14h44 : Observation (8 min)"
+    # La transcription de la séance 1 sert au déroulement de la séance 1, celle de l'entretien n'y est pas
+    appel_s1 = next(u for u in vu if "séance 1 sur 2" in u)
+    assert "[E 00:00] Comment naissent les animaux ?" in appel_s1 and "La main à la pâte" not in appel_s1
+    # Points : titres au format de la formatrice, focales sans doublon, références vérifiées
+    titres = [p["titre"] for p in res["points"]]
+    assert titres[0] == "1. Étayage (aides, rappels, supports pour comprendre)"
+    assert titres[1] == "2. Pilotage (organisation de la tâche, du temps, du matériel)" and titres[2] == ""
+    assert res["points"][0]["ressources_a_verifier"] == ["Manuel inventé, 2030"]
     refs = {r["texte"]: r for r in res["references"]}
     assert refs["La main à la pâte – Le vivant"]["verifie"] is True
     assert refs["Ouvrage imaginaire de M. Personne"]["verifie"] is False
-    assert len(res["points"]) == 3
-    assert res["deroulement"][0]["remarque"] == "Tissage réussi"
-    # Une référence de la bibliothèque intégrée passe, une référence inventée est signalée
-    assert res["points"][0]["ressources_a_verifier"] == ["Manuel inventé, 2030"]
-    assert "CADRE D'ANALYSE PROFESSIONNEL" in vu_prompt[0] and "Bucheton" in vu_prompt[0]
+    assert "CADRE D'ANALYSE PROFESSIONNEL" in vu[-1] and "Bucheton" in vu[-1]
 
 
 def test_synthese_complete_et_photos_dans_bulletin(client):
@@ -468,12 +497,14 @@ def test_deroulement_observe_puis_conseil_dans_le_bulletin(tmp_path):
     from tests.exemple import visite_exemple
 
     v = visite_exemple()
-    v["bulletin"]["deroulement"] = [
-        {"temps": "14h25 – 14h35 (10 min)", "deroulement": "Calcul mental sur ardoise",
+    v["bulletin"]["seances"] = v["bulletin"]["seances"][:1]
+    v["bulletin"]["seances"][0]["deroulement"] = [
+        {"temps": "14h25 : Rituel (10 min)", "deroulement": "Calcul mental sur ardoise",
          "remarque": "Pilotage efficace ; prévoir une validation collective.", "dispositif": "Collectif", "organisation": "Ardoises"},
-        {"temps": "14h35 – 14h55 (20 min)", "deroulement": "Recherche en binômes", "remarque": "",
+        {"temps": "14h35 : Recherche (20 min)", "deroulement": "Recherche en binômes", "remarque": "",
          "dispositif": "Binômes", "organisation": "Fiche"},
     ]
+    v["bulletin"]["points"][0]["analyse"] = "La progression est cohérente.\nTransitions : annoncer l'objectif avant le matériel."
     d = docx.Document(str(fill_bulletin(v, tmp_path / "b.docx")))
     t = next(t for t in d.tables if t.rows[0].cells[0].text.startswith("Temps"))
     cellule = t.rows[1].cells[1]
@@ -483,6 +514,13 @@ def test_deroulement_observe_puis_conseil_dans_le_bulletin(tmp_path):
     ]
     assert cellule.paragraphs[0].runs[0].bold and cellule.paragraphs[1].runs[0].bold
     assert t.rows[2].cells[1].text == "Recherche en binômes"  # sans remarque : l'observé seul
+    # Une seule séance : pas de « Séance numéro 1 »
+    assert "Séance numéro" not in "\n".join(p.text for p in d.paragraphs)
+    # Sous-parties des points discutés : intitulé en gras
+    pts = next(t for t in d.tables if "POINT DISCUT" in t.rows[1].cells[0].text)
+    paras = pts.rows[1].cells[1].paragraphs
+    assert [p.text for p in paras] == ["La progression est cohérente.", "Transitions : annoncer l'objectif avant le matériel."]
+    assert paras[1].runs[0].text == "Transitions : " and paras[1].runs[0].bold
 
 
 def test_bibliotheque_integree_reconnue():
@@ -499,17 +537,11 @@ def test_points_forts_valorises_dans_les_consignes(monkeypatch):
     from app import analysis, llm
 
     vu = []
-
-    def fake(cfg, system, user, schema, timeout=0, **kw):
-        vu.append(user)
-        return {"enseignements": "", "description": "", "deroulement": [], "points": [], "positifs": [],
-                "ameliorer": [], "langue_observations": "", "references": []}
-
-    monkeypatch.setattr(llm, "chat_json", fake)
+    monkeypatch.setattr(llm, "chat_json", _fake_ia(vu))
     v = {"admin": {}, "documents": [], "notes_formatrice": "Très bonne gestion du groupe.", "photos": [],
          "analyse": {"B": {"points_forts": [{"texte": "Consigne claire", "extrait": "x", "verifie": True}]}},
          "transcription": {"segments": []}}
     analysis.preremplir_bulletin({"contexte": 16384}, v, "grille")
-    consignes = vu[0]
-    assert "point d'appui" in consignes and "valorise les points forts" in consignes
+    consignes = vu[-1]
+    assert "Commence par ce qui fonctionne" in consignes and "Valorise les points forts" in consignes
     assert "Consigne claire" in consignes  # les points forts de l'analyse sont bien transmis

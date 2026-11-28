@@ -175,21 +175,29 @@ def export_bilan(visit: dict, out_dir: Path) -> Path:
 
 
 def _seance(d, visit: dict) -> None:
-    """La séance observée : enseignements, description détaillée, déroulement horodaté."""
-    b = visit.get("bulletin", {})
-    _heading(d, "La séance observée")
-    if not (b.get("enseignements") or b.get("description") or b.get("deroulement")):
+    """Les séances observées : domaine, objectif(s), description détaillée, déroulement horodaté."""
+    from docx.shared import Cm
+
+    seances = bulletin.seances_de(visit.get("bulletin", {}))
+    _heading(d, "Les séances observées" if len(seances) > 1 else "La séance observée")
+    if not seances:
         d.add_paragraph("À compléter (étape Bulletin).").runs[0].italic = True
         return
-    if b.get("enseignements"):
-        p = d.add_paragraph()
-        p.add_run("Enseignements observés : ").bold = True
-        p.add_run(b["enseignements"])
-    for para in (b.get("description") or "").split("\n"):
-        if para.strip():
-            d.add_paragraph(para.strip())
-    lignes = [r for r in b.get("deroulement", []) if any(str(v).strip() for v in r.values())]
-    if lignes:
+    for n, se in enumerate(seances, 1):
+        if len(seances) > 1:
+            _heading(d, f"Séance {n}" + (f" – {se['domaine']}" if se.get("domaine") else ""), size=11.5)
+        for lib, val in (("Domaine ou discipline : ", se.get("domaine", "") if len(seances) == 1 else ""),
+                         ("Objectif(s) : ", se.get("objectifs", ""))):
+            if str(val).strip():
+                p = d.add_paragraph()
+                p.add_run(lib).bold = True
+                p.add_run(str(val).strip())
+        for para in str(se.get("description", "")).split("\n"):
+            if para.strip():
+                d.add_paragraph(para.strip())
+        lignes = [r for r in se.get("deroulement", []) if any(str(v).strip() for v in r.values())]
+        if not lignes:
+            continue
         p = d.add_paragraph()
         p.paragraph_format.space_before = Pt(6)
         p.add_run("Déroulement").bold = True
@@ -209,8 +217,6 @@ def _seance(d, visit: dict) -> None:
                 run = cell.paragraphs[0].add_run(str(r.get(k, "")))
                 run.font.size = Pt(9.5)
         # Colonnes de texte plus larges (largeur utile d'une page A4 : environ 16 cm)
-        from docx.shared import Cm
-
         t.autofit = False
         largeurs = (2.5, 4.6, 4.6, 2.2, 2.4)
         for col, w in zip(t.columns, largeurs):

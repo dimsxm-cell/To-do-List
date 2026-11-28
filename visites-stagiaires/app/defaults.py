@@ -98,7 +98,10 @@ OUTILS = [
 BULLETIN_VIDE = {
     "enseignements": "",
     "description": "",
-    "deroulement": [],  # [{"temps", "deroulement", "dispositif", "organisation"}]
+    "deroulement": [],  # (avant la v1.8) remplacé par « seances »
+    # Une ou plusieurs séances observées : [{"domaine", "objectifs", "description",
+    #   "deroulement": [{"temps", "deroulement", "remarque", "dispositif", "organisation"}]}]
+    "seances": [],
     "points": [
         {"titre": "", "analyse": "", "ressources": ""},
         {"titre": "", "analyse": "", "ressources": ""},

@@ -20,7 +20,7 @@ const S = {
 const ETAPES = [
   ["infos", "Infos"],
   ["documents", "Documents"],
-  ["entretien", "Entretien"],
+  ["entretien", "Enregistrements"],
   ["transcription", "Transcription"],
   ["analyse", "Analyse"],
   ["bulletin", "Bulletin"],
@@ -548,9 +548,15 @@ function stepEntretien(p) {
   const v = S.visit;
   const recActif = S.rec && S.rec.vid === v.id && S.rec.mr && S.rec.mr.state !== "inactive";
   const orphelins = v.audios.filter((a) => a.etat === "en_cours" && !(recActif && S.rec.id === a.id));
+  const cible = S.recCible || (S.recCible = { type: "seance", seance: 1 });
+  const cibleCle = cible.type === "seance" ? `seance${cible.seance}` : "entretien";
+  const CIBLES = [["seance1", "Séance 1 (en classe)"], ["seance2", "Séance 2 (en classe)"], ["entretien", "L'entretien"]];
   p.innerHTML = `
-    <div class="carte"><h2>Enregistrer l'entretien</h2>
-      <div class="aide">Posez le Mac entre vous deux, branché sur secteur, couvercle ouvert. L'enregistrement est sauvegardé sur le Mac toutes les 5 secondes : rien n'est perdu en cas de souci.</div>
+    <div class="carte"><h2>Enregistrer la séance et l'entretien</h2>
+      <div class="aide">Enregistrez la séance en classe : l'appli en tirera un déroulement détaillé, avec les paroles de l'enseignante et des élèves, à votre place. Puis enregistrez l'entretien. Mac branché sur secteur, couvercle ouvert ; sauvegarde automatique toutes les 5 secondes.</div>
+      <label>Ce que vous allez enregistrer</label>
+      <div class="choix" id="cibles" style="margin-bottom:12px">${CIBLES.map(([k, l]) => `<label><input type="radio" name="cible" value="${k}" ${k === cibleCle ? "checked" : ""} ${recActif ? "disabled" : ""}> ${l}</label>`).join("")}</div>
+      ${cible.type === "seance" ? `<div class="alerte" style="margin-bottom:12px">Enregistrer une séance, c'est enregistrer des voix d'élèves mineurs. L'audio reste sur ce Mac, mais vérifiez les règles de votre institution (information des familles, accord de l'IEN). Vous pouvez supprimer l'enregistrement une fois le bulletin validé.</div>` : ""}
       <div class="micro-zone">
         <button class="micro" id="micro" aria-label="Démarrer l'enregistrement">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.5" width="6" height="12" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3.5"/></svg>
@@ -571,7 +577,8 @@ function stepEntretien(p) {
     <div class="carte"><h2>Enregistrements de cette visite</h2>
       ${v.audios.filter((a) => a.etat === "pret").map((a) => `
         <div class="audio-ligne">
-          <div style="min-width:220px"><b>${esc(a.nom)}</b><div class="muted small">${hms(a.duree)}</div></div>
+          <div style="min-width:220px"><b>${esc(a.nom)}</b><div class="muted small">${hms(a.duree)}</div>
+            <select class="small" data-type-audio="${a.id}" style="width:auto;margin-top:4px;padding:3px 6px">${CIBLES.map(([k, l]) => `<option value="${k}" ${k === ((a.type || "entretien") === "seance" ? `seance${a.seance || 1}` : "entretien") ? "selected" : ""}>${l}</option>`).join("")}</select></div>
           <audio controls preload="metadata" src="/api/visites/${v.id}/audios/${a.id}"></audio>
           <button class="btn mini danger" data-suppr-audio="${a.id}">Supprimer</button>
         </div>`).join("") || `<p class="muted">Aucun enregistrement pour l'instant.</p>`}
@@ -591,6 +598,20 @@ function stepEntretien(p) {
     if (S.rec.mr.state === "recording") pause();
     else if (S.rec.mr.state === "paused") reprendre();
   };
+  $("#cibles").onchange = (e) => {
+    const k = e.target.value;
+    S.recCible = k === "entretien" ? { type: "entretien", seance: 0 } : { type: "seance", seance: +k.slice(-1) };
+    stepEntretien(p);
+  };
+  p.onchange = async (e) => {
+    const sel = e.target.closest("[data-type-audio]");
+    if (!sel) return;
+    const k = sel.value;
+    S.visit = await api("PATCH", `/api/visites/${v.id}/audios/${sel.dataset.typeAudio}`,
+      k === "entretien" ? { type: "entretien" } : { type: "seance", seance: +k.slice(-1) });
+    toast("Enregistrement reclassé.");
+    stepEntretien(p);
+  };
   $("#recPause").onclick = pause;
   $("#recResume").onclick = reprendre;
   $("#recStop").onclick = () => S.rec.stop();
@@ -599,6 +620,8 @@ function stepEntretien(p) {
     if (!f) return;
     const fd = new FormData();
     fd.append("fichier", f);
+    fd.append("type", S.recCible.type);
+    fd.append("seance", String(S.recCible.seance || 1));
     $("#recMsg").textContent = "Import en cours…";
     S.visit = await api("POST", `/api/visites/${v.id}/audios`, fd);
     toast("Fichier audio importé.");
@@ -644,7 +667,7 @@ async function demarrerEnregistrement(vid) {
     return;
   }
   const mime = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm", "audio/ogg;codecs=opus"].find((m) => MediaRecorder.isTypeSupported(m)) || "";
-  const entry = await api("POST", `/api/visites/${vid}/enregistrement`, { mime });
+  const entry = await api("POST", `/api/visites/${vid}/enregistrement`, { mime, ...(S.recCible || { type: "entretien" }) });
   const mr = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 96000 } : undefined);
   let queue = Promise.resolve(), enAttente = 0, echecs = 0, cumul = 0, debut = Date.now(), raf = null, wake = null, dernierSon = Date.now();
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -716,7 +739,7 @@ async function demarrerEnregistrement(vid) {
   majBoutonsRec("rec");
   tick();
   const m = $("#recMsg");
-  if (m) m.textContent = "Enregistrement en cours. Pensez à prévenir la stagiaire.";
+  if (m) m.textContent = "Enregistrement en cours.";
 }
 
 /* ------------------------------------------------------------------ étape 4 : transcription */
@@ -727,10 +750,22 @@ function stepTranscription(p) {
   const prets = v.audios.filter((a) => a.etat === "pret");
   const partiel = prets.some((a) => !(v.transcription.progression || {})[a.id]) && segs.length > 0;
   const nbQ = segs.filter((s) => s.locuteur === "?").length;
+  const audioDe = Object.fromEntries(v.audios.map((a) => [a.id, a]));
+  const genre = (s) => ((audioDe[s.audio] || {}).type === "seance" ? "seance" : "entretien");
+  const titreAudio = (s) => {
+    const a = audioDe[s.audio] || {};
+    return a.type === "seance" ? `Séance ${a.seance || 1} en classe — E = l'enseignante` : "Entretien — formatrice et stagiaire";
+  };
+  let dernierAudio = null;
+  const lignesSegs = segs.map((s, i) => {
+    const entete = s.audio !== dernierAudio ? `<h3 style="margin-top:18px">${esc(titreAudio(s))}</h3>` : "";
+    dernierAudio = s.audio;
+    return entete + segHtml(s, i, genre(s));
+  }).join("");
   p.innerHTML = `
     <div class="carte"><h2>Transcription</h2>
       <div id="jobZone"></div>
-      ${!prets.length ? `<div class="alerte">Enregistrez ou importez d'abord l'entretien (étape « Entretien »).</div>` : ""}
+      ${!prets.length ? `<div class="alerte">Enregistrez ou importez d'abord la séance ou l'entretien (étape « Enregistrements »).</div>` : ""}
       <div class="outils-trans">
         ${prets.length && !segs.length ? `<button class="btn primaire" id="transcrire">Lancer la transcription</button><span class="muted small">Sur ce Mac, sans Internet. Comptez quelques minutes pour 45 min d'entretien.</span>` : ""}
         ${segs.length ? `
@@ -747,7 +782,7 @@ function stepTranscription(p) {
           <span>⊘ = passage hors sujet (écarté du compte rendu).</span>
           ${nbQ ? `<span class="badge orange">${nbQ} passage(s) sans interlocuteur</span>` : ""}
         </div>
-        <div id="segs">${segs.map((s, i) => segHtml(s, i)).join("")}</div>` : ""}
+        <div id="segs">${lignesSegs}</div>` : ""}
     </div>`;
   $$("#segs textarea").forEach((t) => { t.classList.add("auto"); autosize(t); });
   const on = (id, fn) => $("#" + id) && ($("#" + id).onclick = fn);
@@ -772,10 +807,11 @@ function stepTranscription(p) {
     const i = +b.dataset.i, s = segs[i];
     if (b.classList.contains("t")) jouer(s);
     if (b.classList.contains("loc")) {
-      s.locuteur = { "?": "F", F: "S", S: "F" }[s.locuteur || "?"];
+      const g = genre(s);
+      s.locuteur = (g === "seance" ? { "?": "S", S: "EL", EL: "S", F: "S" } : { "?": "F", F: "S", S: "F", EL: "F" })[s.locuteur || "?"];
       s.verrouille = true;
       b.className = "loc " + s.locuteur;
-      b.textContent = libLoc(s.locuteur);
+      b.textContent = libLoc(s.locuteur, g);
       saveSegments();
     }
     if (b.classList.contains("hsbtn")) {
@@ -794,17 +830,19 @@ function stepTranscription(p) {
   });
 }
 
-function segHtml(s, i) {
+function segHtml(s, i, genre = "entretien") {
   return `<div class="seg ${s.hors_sujet ? "hs" : ""}">
     <button class="t" data-i="${i}" title="Réécouter">${hms(s.debut)}</button>
-    <div><button class="loc ${s.locuteur}" data-i="${i}">${libLoc(s.locuteur)}</button></div>
+    <div><button class="loc ${s.locuteur}" data-i="${i}">${libLoc(s.locuteur, genre)}</button></div>
     <div><textarea rows="1" data-i="${i}">${esc(s.texte)}</textarea>
       ${s.texte_original ? `<div class="corr">corrigé par l'IA · <button class="btn lien mini" data-i="${i}" data-annuler>revenir au texte d'origine</button></div>` : ""}</div>
     <button class="hsbtn ${s.hors_sujet ? "on" : ""}" data-i="${i}" title="Marquer hors sujet">⊘</button>
   </div>`;
 }
 
-const libLoc = (l) => ({ F: "Formatrice", S: "Stagiaire" }[l] || "? qui parle");
+const libLoc = (l, genre = "entretien") => (genre === "seance"
+  ? { S: "Enseignante", EL: "Élève" }[l]
+  : { F: "Formatrice", S: "Stagiaire" }[l]) || "? qui parle";
 
 function saveSegments() {
   clearTimeout(S.segTimer);
@@ -839,7 +877,8 @@ const GROUPES = {
 function stepAnalyse(p) {
   const v = S.visit, an = v.analyse;
   const nbKo = Object.keys(GROUPES).reduce((n, g) => n + Object.keys(GROUPES[g][1]).reduce((m, k) => m + (an[g]?.[k] || []).filter((it) => !it.verifie).length, 0), 0);
-  const nbQ = v.transcription.segments.filter((s) => s.locuteur === "?" && !s.hors_sujet).length;
+  const seanceIds = new Set(v.audios.filter((a) => a.type === "seance").map((a) => a.id));
+  const nbQ = v.transcription.segments.filter((s) => s.locuteur === "?" && !s.hors_sujet && !seanceIds.has(s.audio)).length;
   p.innerHTML = `
     <div class="carte"><h2>Analyse réflexive</h2>
       <div id="jobZone"></div>
@@ -889,6 +928,14 @@ function stepAnalyse(p) {
 
 function stepBulletin(p) {
   const v = S.visit, b = v.bulletin;
+  const seanceVide = () => ({ domaine: "", objectifs: "", description: "", deroulement: [] });
+  if (!Array.isArray(b.seances) || !b.seances.length) {
+    b.seances = (b.enseignements || b.description || (b.deroulement || []).length)
+      ? [{ domaine: "", objectifs: b.enseignements || "", description: b.description || "", deroulement: b.deroulement || [] }]
+      : [seanceVide()];
+    b.enseignements = ""; b.description = ""; b.deroulement = [];
+    save({ bulletin: b });
+  }
   while (b.points.length < 3) b.points.push({ titre: "", analyse: "", ressources: "" });
   const m2 = v.admin.statut === "mi_temps_m2";
   const radios = (path, cur) => `<div class="niveaux">${NIV.map((n) => `<label title="${NIV_LIB[n]}"><input type="radio" name="${path}" data-bind="${path}" value="${n}" ${cur === n ? "checked" : ""}>${n}</label>`).join("")}
@@ -900,17 +947,22 @@ function stepBulletin(p) {
       <div class="ligne"><button class="btn primaire" id="preremplir">${b.prerempli ? "Préremplir à nouveau" : "Préremplir le bulletin"}</button>
         ${!v.analyse.genere ? `<span class="muted small">Conseil : générez d'abord l'analyse (étape précédente).</span>` : ""}</div>
     </div>
-    <div class="carte"><h2>Enseignements observés ce jour</h2>
-      <label>Domaine ou discipline, objectifs de la (des) séance(s)</label>
-      <textarea class="auto" rows="2" data-bind="bulletin.enseignements" placeholder="${AFAIRE}">${esc(b.enseignements)}</textarea>
-      <label style="margin-top:12px">Description de la (des) séance(s) présentée(s)</label>
-      <textarea class="auto" rows="9" data-bind="bulletin.description" placeholder="${AFAIRE}">${esc(b.description)}</textarea>
+    ${b.seances.map((se, n) => `
+    <div class="carte"><div class="ligne"><h2 style="margin:0">${b.seances.length > 1 ? `Séance ${n + 1}` : "Séance observée"}</h2><span class="espace"></span>
+        ${b.seances.length > 1 ? `<button class="btn mini danger" data-suppr-seance="${n}">Supprimer cette séance</button>` : ""}</div>
+      <div class="grille g2" style="margin-top:12px">
+        <div><label>Domaine ou discipline</label><input type="text" data-bind="bulletin.seances.${n}.domaine" value="${esc(se.domaine)}" placeholder="Ex. : Questionner le monde – le vivant"></div>
+        <div><label>Objectif(s) de la séance observée</label><textarea class="auto" rows="1" data-bind="bulletin.seances.${n}.objectifs" placeholder="${AFAIRE}">${esc(se.objectifs)}</textarea></div>
+      </div>
+      <label style="margin-top:12px">Description de la séance présentée</label>
+      <textarea class="auto" rows="8" data-bind="bulletin.seances.${n}.description" placeholder="${AFAIRE}">${esc(se.description)}</textarea>
       <h3>Déroulement</h3>
-      <div class="muted small" style="margin-bottom:6px">Astuce : avec l'horaire de la séance (étape Infos) et les durées, l'appli note les heures de chaque phase, par exemple « 14h25 – 14h35 (10 min) ».</div>
-      <table class="table-der"><thead><tr><th style="width:15%">Horaire / durée</th><th>Déroulement observé</th><th style="width:27%">Analyse et conseil de la formatrice</th><th style="width:12%">Dispositif</th><th style="width:15%">Organisation matérielle</th><th style="width:34px"></th></tr></thead>
-        <tbody>${b.deroulement.map((r, i) => `<tr>${["temps", "deroulement", "remarque", "dispositif", "organisation"].map((k) => `<td><textarea class="auto" rows="2" data-bind="bulletin.deroulement.${i}.${k}" ${k === "remarque" ? `placeholder="Rien noté pour cette phase"` : ""}>${esc(r[k] || "")}</textarea></td>`).join("")}<td><button class="btn mini danger" data-del-row="${i}">✕</button></td></tr>`).join("")}</tbody></table>
-      <button class="btn mini" id="ajLigne" style="margin-top:6px">+ Ajouter une phase</button>
-    </div>
+      <div class="muted small" style="margin-bottom:6px">Format : « 14h06 : Rappel (5 min) ». Avec l'enregistrement de la séance, l'appli reprend les paroles de l'enseignante (E) et des élèves.</div>
+      <table class="table-der"><thead><tr><th style="width:15%">Temps (phase / minutage)</th><th>Déroulement observé</th><th style="width:27%">Analyse et conseil de la formatrice</th><th style="width:12%">Dispositif</th><th style="width:15%">Organisation matérielle</th><th style="width:34px"></th></tr></thead>
+        <tbody>${(se.deroulement || []).map((r, i) => `<tr>${["temps", "deroulement", "remarque", "dispositif", "organisation"].map((k) => `<td><textarea class="auto" rows="2" data-bind="bulletin.seances.${n}.deroulement.${i}.${k}" ${k === "remarque" ? `placeholder="Rien noté pour cette phase"` : ""}>${esc(r[k] || "")}</textarea></td>`).join("")}<td><button class="btn mini danger" data-del-row="${n}.${i}">✕</button></td></tr>`).join("")}</tbody></table>
+      <button class="btn mini" data-aj-ligne="${n}" style="margin-top:6px">+ Ajouter une phase</button>
+    </div>`).join("")}
+    <div class="ligne" style="margin:-4px 0 16px"><button class="btn" id="ajSeance">+ Ajouter une séance observée</button></div>
     <div class="carte"><h2>Remarques et conseils portant sur la (les) séance(s)</h2>
       ${b.points.slice(0, 3).map((pt, i) => `
         <div class="point"><h4>POINT DISCUTÉ ${i + 1}</h4>
@@ -963,11 +1015,13 @@ function stepBulletin(p) {
       .map((texte) => ({ texte, source: "formatrice", verifie: true }));
     save({ bulletin: b });
   });
-  $("#ajLigne").onclick = () => { b.deroulement.push({ temps: "", deroulement: "", remarque: "", dispositif: "", organisation: "" }); save({ bulletin: b }); stepBulletin(p); };
+  $("#ajSeance").onclick = () => { b.seances.push(seanceVide()); save({ bulletin: b }); stepBulletin(p); };
   p.onclick = (e) => {
     const x = e.target.closest("button");
     if (!x) return;
-    if (x.dataset.delRow) { b.deroulement.splice(+x.dataset.delRow, 1); save({ bulletin: b }); stepBulletin(p); }
+    if (x.dataset.delRow) { const [n, i] = x.dataset.delRow.split(".").map(Number); b.seances[n].deroulement.splice(i, 1); save({ bulletin: b }); stepBulletin(p); }
+    if (x.dataset.ajLigne) { (b.seances[+x.dataset.ajLigne].deroulement ||= []).push({ temps: "", deroulement: "", remarque: "", dispositif: "", organisation: "" }); save({ bulletin: b }); stepBulletin(p); }
+    if (x.dataset.supprSeance && confirm("Supprimer cette séance et son déroulement ?")) { b.seances.splice(+x.dataset.supprSeance, 1); save({ bulletin: b }); stepBulletin(p); }
     if (x.dataset.efface) { setPath(v, x.dataset.efface, ""); save({ bulletin: b }); stepBulletin(p); }
   };
 }

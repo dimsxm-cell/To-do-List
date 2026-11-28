@@ -71,3 +71,13 @@ def bibliotheque_complete(perso: str) -> str:
     lignes = list(REFERENCES_INTEGREES)
     lignes += [ln.strip(" -•\t") for ln in (perso or "").splitlines() if ln.strip()]
     return "\n".join(lignes)
+
+
+# Intitulés des points discutés, au format utilisé par la formatrice dans ses bulletins.
+FOCALES = {
+    "pilotage": "Pilotage (organisation de la tâche, du temps, du matériel)",
+    "etayage": "Étayage (aides, rappels, supports pour comprendre)",
+    "tissage": "Tissage (liens avec les savoirs, entre les séances)",
+    "atmosphere": "Atmosphère (climat de classe, relations, engagement des élèves)",
+    "objets_savoir": "Objets de savoir (notions, vocabulaire et savoirs visés)",
+}

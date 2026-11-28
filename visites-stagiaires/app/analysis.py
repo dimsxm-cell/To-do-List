@@ -36,6 +36,29 @@ def _norm(s: str) -> str:
 
 
 LOC = {"F": "Formatrice", "S": "Stagiaire", "?": "Interlocuteur non identifié"}
+# Dans l'enregistrement d'une séance en classe, la stagiaire est l'enseignante (« E »).
+LOC_SEANCE = {"S": "E", "EL": "Élève", "?": "?"}
+
+
+def types_audios(visit: dict) -> dict:
+    """{id audio: (type, numéro de séance)} — type « entretien » (par défaut) ou « seance »."""
+    return {a["id"]: (a.get("type") or "entretien", int(a.get("seance") or 1)) for a in visit.get("audios", [])}
+
+
+def segments_entretien(visit: dict) -> list[dict]:
+    types = types_audios(visit)
+    return [s for s in visit.get("transcription", {}).get("segments", [])
+            if types.get(s.get("audio"), ("entretien", 1))[0] != "seance"]
+
+
+def segments_seance(visit: dict, numero: int) -> list[dict]:
+    types = types_audios(visit)
+    return [s for s in visit.get("transcription", {}).get("segments", [])
+            if types.get(s.get("audio"), ("entretien", 1)) == ("seance", numero)]
+
+
+def numeros_seances_enregistrees(visit: dict) -> list[int]:
+    return sorted({n for t, n in types_audios(visit).values() if t == "seance"})
 
 
 def turns(segments: list[dict], include_hors_sujet: bool = False) -> list[dict]:
@@ -53,9 +76,10 @@ def turns(segments: list[dict], include_hors_sujet: bool = False) -> list[dict]:
     return out
 
 
-def transcript_text(segments: list[dict], include_hors_sujet: bool = False) -> str:
+def transcript_text(segments: list[dict], include_hors_sujet: bool = False, seance: bool = False) -> str:
+    noms = LOC_SEANCE if seance else LOC
     return "\n".join(
-        f"[{LOC.get(t['locuteur'], t['locuteur'])} {hms(t['debut'])}] {t['texte']}"
+        f"[{noms.get(t['locuteur'], t['locuteur'])} {hms(t['debut'])}] {t['texte']}"
         for t in turns(segments, include_hors_sujet)
     )
 
@@ -126,7 +150,28 @@ SCHEMA_LOC = {
 }
 
 
-def attribuer_interlocuteurs(cfg: dict, segments: list[dict], progress=lambda p, m="": None) -> list[dict]:
+SCHEMA_LOC_SEANCE = {
+    "type": "object",
+    "properties": {
+        "lignes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "n": {"type": "integer"},
+                    "locuteur": {"type": "string", "enum": ["S", "EL"]},
+                    "hors_sujet": {"type": "boolean"},
+                },
+                "required": ["n", "locuteur", "hors_sujet"],
+            },
+        }
+    },
+    "required": ["lignes"],
+}
+
+
+def attribuer_interlocuteurs(cfg: dict, segments: list[dict], progress=lambda p, m="": None,
+                             mode: str = "entretien") -> list[dict]:
     """Propose F (formatrice) / S (stagiaire) et repère les conversations parasites.
 
     Les choix faits à la main par la formatrice (verrouille=True) ne sont jamais écrasés.
@@ -138,18 +183,32 @@ def attribuer_interlocuteurs(cfg: dict, segments: list[dict], progress=lambda p,
         contexte = segments[max(0, k * size - 4): k * size]
         lignes = "\n".join(f"{i + 1}. {s['texte']}" for i, s in enumerate(lot))
         avant = "\n".join(f"- ({s.get('locuteur', '?')}) {s['texte']}" for s in contexte)
+        if mode == "seance":
+            consigne = (
+                "Voici un extrait de la transcription automatique d'une SÉANCE EN CLASSE (école primaire). "
+                "Codes : S = l'ENSEIGNANTE (elle donne les consignes, questionne, valide, relance, gère la classe), "
+                "EL = un ou des ÉLÈVES (réponses, questions, propositions).\n"
+                "Pour CHAQUE ligne numérotée, indique qui parle (S ou EL) et si la ligne est HORS SUJET "
+                "(bruit, échange sans rapport avec la séance).\n"
+            )
+        else:
+            consigne = (
+                "Voici un extrait de la transcription automatique d'un entretien de visite formative "
+                "entre une FORMATRICE (F) et une enseignante STAGIAIRE (S), après l'observation d'une séance en classe.\n"
+                "Indices : la formatrice pose les questions, reformule, apprécie, conseille, cite des ressources. "
+                "La stagiaire décrit sa classe, ses choix, ses difficultés, répond aux questions.\n"
+                "Pour CHAQUE ligne numérotée, indique qui parle (F ou S) et si la ligne est HORS SUJET "
+                "(conversation parasite sans rapport avec l'entretien professionnel : téléphone, bavardage, "
+                "interruption par un tiers, logistique sans intérêt).\n"
+            )
         user = (
-            "Voici un extrait de la transcription automatique d'un entretien de visite formative "
-            "entre une FORMATRICE (F) et une enseignante STAGIAIRE (S), après l'observation d'une séance en classe.\n"
-            "Indices : la formatrice pose les questions, reformule, apprécie, conseille, cite des ressources. "
-            "La stagiaire décrit sa classe, ses choix, ses difficultés, répond aux questions.\n"
-            "Pour CHAQUE ligne numérotée, indique qui parle (F ou S) et si la ligne est HORS SUJET "
-            "(conversation parasite sans rapport avec l'entretien professionnel : téléphone, bavardage, "
-            "interruption par un tiers, logistique sans intérêt).\n"
+            consigne
             + (f"\nLignes précédentes (pour le contexte) :\n{avant}\n" if avant else "")
             + f"\nLignes à traiter :\n{lignes}\n\nRéponds en JSON."
         )
-        res = llm.chat_json(cfg, SYSTEME, user, SCHEMA_LOC, attendu=45 * len(lot),
+        schema = SCHEMA_LOC_SEANCE if mode == "seance" else SCHEMA_LOC
+        codes = ("S", "EL") if mode == "seance" else ("F", "S")
+        res = llm.chat_json(cfg, SYSTEME, user, schema, attendu=45 * len(lot),
                             progress=lambda f, m, k=k: progress((k + f) / total, f"Interlocuteurs : lot {k + 1}/{total}"))
         par_n = {int(x.get("n", 0)): x for x in res.get("lignes", []) if isinstance(x, dict)}
         for i, s in enumerate(lot):
@@ -157,7 +216,7 @@ def attribuer_interlocuteurs(cfg: dict, segments: list[dict], progress=lambda p,
                 continue
             x = par_n.get(i + 1)
             if x:
-                s["locuteur"] = x.get("locuteur") if x.get("locuteur") in ("F", "S") else "?"
+                s["locuteur"] = x.get("locuteur") if x.get("locuteur") in codes else "?"
                 s["hors_sujet"] = bool(x.get("hors_sujet"))
         progress((k + 1) / total, f"Interlocuteurs : lot {k + 1}/{total}")
     return segments
@@ -361,7 +420,7 @@ CONSIGNE_ANALYSE = (
 
 
 def analyse_reflexive(cfg: dict, visit: dict, grille: str, progress=lambda p, m="": None) -> dict:
-    segments = visit.get("transcription", {}).get("segments", [])
+    segments = segments_entretien(visit)
     trans = transcript_text(segments)
     notes = (visit.get("notes_formatrice") or "").strip()
     docs = resume_documents(visit.get("documents", []))
@@ -466,28 +525,49 @@ def _nettoyer_analyse(res: dict, sources: str) -> dict:
 
 # ------------------------------------------------------------------ 5. bulletin
 
-SCHEMA_BULLETIN = {
+_PHASE = {
     "type": "object",
     "properties": {
-        "enseignements": {"type": "string"},
-        "description": {"type": "string"},
-        "deroulement": {
+        "temps": {"type": "string"}, "deroulement": {"type": "string"}, "remarque": {"type": "string"},
+        "dispositif": {"type": "string"}, "organisation": {"type": "string"},
+    },
+    "required": ["temps", "deroulement", "remarque", "dispositif", "organisation"],
+}
+
+SCHEMA_SEANCES = {
+    "type": "object",
+    "properties": {
+        "seances": {
             "type": "array",
             "items": {
                 "type": "object",
-                "properties": {
-                    "temps": {"type": "string"}, "deroulement": {"type": "string"}, "remarque": {"type": "string"},
-                    "dispositif": {"type": "string"}, "organisation": {"type": "string"},
-                },
-                "required": ["temps", "deroulement", "remarque", "dispositif", "organisation"],
+                "properties": {"domaine": {"type": "string"}, "objectifs": {"type": "string"},
+                               "description": {"type": "string"}},
+                "required": ["domaine", "objectifs", "description"],
             },
-        },
+        }
+    },
+    "required": ["seances"],
+}
+
+SCHEMA_DEROULEMENT = {
+    "type": "object",
+    "properties": {"deroulement": {"type": "array", "items": _PHASE}},
+    "required": ["deroulement"],
+}
+
+SCHEMA_BULLETIN = {
+    "type": "object",
+    "properties": {
         "points": {
             "type": "array",
             "items": {
                 "type": "object",
-                "properties": {"titre": {"type": "string"}, "analyse": {"type": "string"}, "ressources": {"type": "string"}},
-                "required": ["titre", "analyse", "ressources"],
+                "properties": {
+                    "focale": {"type": "string", "enum": ["pilotage", "etayage", "tissage", "atmosphere", "objets_savoir"]},
+                    "analyse": {"type": "string"}, "ressources": {"type": "string"},
+                },
+                "required": ["focale", "analyse", "ressources"],
             },
         },
         "positifs": {"type": "array", "items": {"type": "string"}},
@@ -495,8 +575,7 @@ SCHEMA_BULLETIN = {
         "langue_observations": {"type": "string"},
         "references": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["enseignements", "description", "deroulement", "points", "positifs", "ameliorer",
-                 "langue_observations", "references"],
+    "required": ["points", "positifs", "ameliorer", "langue_observations", "references"],
 }
 
 
@@ -536,7 +615,7 @@ def _fmt(minutes: int) -> str:
 
 
 def horodater(deroulement: list[dict], horaire: str) -> list[dict]:
-    """Ajoute l'heure de début et de fin à chaque phase : « 14h25 – 14h35 (10 min) ».
+    """Ajoute l'heure de début à chaque phase, au format de la formatrice : « 14h06 : Rappel (5 min) ».
 
     Calcul uniquement si l'heure de début de séance est connue (champ Horaire) et que
     chaque phase sans heure indique sa durée. Une phase qui a déjà une heure est gardée
@@ -564,7 +643,7 @@ def horodater(deroulement: list[dict], horaire: str) -> list[dict]:
         elif duree:
             d = int(duree.group(1))
             reste = _DUREE.sub("", temps).strip(" -–—,:()")
-            r["temps"] = f"{_fmt(courant)} – {_fmt(courant + d)} ({d} min)" + (f"\n{reste}" if reste else "")
+            r["temps"] = f"{_fmt(courant)} : {reste} ({d} min)" if reste else f"{_fmt(courant)} ({d} min)"
             courant += d
         else:
             return deroulement  # une durée inconnue : on ne devine pas la suite
@@ -594,98 +673,168 @@ def verifier_references(refs: list[str], bibliotheque: str, sources: str) -> lis
     return out
 
 
+def _seances_resume(seances: list[dict]) -> str:
+    return "\n".join(
+        f"Séance {n} – {x.get('domaine', '')} : {x.get('objectifs', '')} — {x.get('description', '')[:600]}"
+        for n, x in enumerate(seances, 1)
+    )
+
+
+CONSIGNE_DEROULEMENT = (
+    "Construis le DÉROULEMENT OBSERVÉ de cette séance, phase par phase, dans l'ordre chronologique.\n"
+    "C'est un relevé d'observation FIDÈLE, comme celui que la formatrice tape en direct : ne résume pas.\n"
+    "- temps : l'heure de début de la phase si elle est connue, son nom et sa durée, au format "
+    "« 14h06 : Rappel (5 min) » ; sans heure connue : « Rappel (5 min) ».\n"
+    "- deroulement : ce qui se passe réellement, en reprenant MOT POUR MOT les paroles importantes, entre "
+    "guillemets : « E : » pour l'enseignante, « Un élève : » ou « Les élèves : » pour les élèves. Consignes "
+    "données, questions posées, réponses et erreurs des élèves, aides apportées, ce qui est écrit au tableau. "
+    "Plusieurs lignes par phase si nécessaire. Aucun jugement ici.\n"
+    "- remarque : l'analyse et le conseil de la formatrice sur cette phase s'ils figurent dans ses notes ou dans "
+    "l'entretien (en commençant par ce qui a bien fonctionné), sinon chaîne vide.\n"
+    "- dispositif (collectif, binômes, individuel…) ; organisation matérielle (supports, matériel).\n"
+    "N'invente aucune parole ni aucun événement : n'utilise que les notes et la transcription fournies.\n"
+)
+
+
 def preremplir_bulletin(cfg: dict, visit: dict, grille: str, progress=lambda p, m="": None,
                         bibliotheque: str = "") -> dict:
-    from .referentiel import CADRE_ANALYSE, bibliotheque_complete
+    """Préremplit le bulletin en trois temps : séances, déroulement fidèle de chaque séance, points discutés."""
+    from .referentiel import CADRE_ANALYSE, FOCALES, bibliotheque_complete
 
     adm = visit.get("admin", {})
     docs = resume_documents(visit.get("documents", []))
     photos = legendes_photos(visit)
     notes = ((visit.get("notes_formatrice") or "") + "\n" + photos).strip()
     ana = analyse_en_texte(visit.get("analyse", {}))
-    trans = transcript_text(visit.get("transcription", {}).get("segments", []))
-    if not (docs or notes or ana or trans):
+    trans = transcript_text(segments_entretien(visit))
+    num_enreg = numeros_seances_enregistrees(visit)
+    trans_seances = {n: transcript_text(segments_seance(visit, n), seance=True) for n in num_enreg}
+    if not (docs or notes or ana or trans or any(trans_seances.values())):
         raise llm.IAIndisponible("Il n'y a encore aucune information pour préremplir le bulletin.")
     biblio = bibliotheque_complete(bibliotheque)
-    reste = _budget_chars(cfg) - len(docs) - len(notes) - len(ana) - len(grille) - len(biblio) - len(CADRE_ANALYSE) - 4500
-    extrait_trans = trans[: max(0, reste)] if reste > 2000 else ""
-    user = (
-        f"GRILLE ET ATTENTES :\n{grille}\n\n{CADRE_ANALYSE}\n"
-        f"CLASSE : {adm.get('classe', '')} – effectif {adm.get('effectif', '')} – horaire de la séance : "
+    entete = (
+        f"CLASSE : {adm.get('classe', '')} – effectif {adm.get('effectif', '')} – horaire de la visite : "
         f"{adm.get('horaire', '') or 'non renseigné'}\n\n"
         + (f"DOCUMENTS DE LA STAGIAIRE :\n{docs}\n\n" if docs else "")
-        + (f"NOTES DE LA FORMATRICE (dont les légendes des photos) :\n{notes}\n\n" if notes else "")
+        + (f"NOTES D'OBSERVATION DE LA FORMATRICE (dont les légendes des photos) :\n{notes}\n\n" if notes else "")
+    )
+
+    # --- 1. Les séances observées : domaine, objectif(s), description
+    progress(0.02, "Repérage des séances observées…")
+    apercus = "".join(
+        f"DÉBUT DE L'ENREGISTREMENT DE LA SÉANCE {n} :\n{t[:2500]}\n\n" for n, t in trans_seances.items() if t
+    )
+    user = (
+        entete + apercus
+        + "Combien de séances ont été observées pendant cette visite (souvent une seule, parfois deux dans des "
+        "disciplines différentes, par exemple une fiche de séance par discipline ou « 2ème séance » dans les notes) ? "
+        + (f"Des enregistrements existent pour les séances n° {', '.join(map(str, num_enreg))}. " if num_enreg else "")
+        + "Pour CHAQUE séance, dans l'ordre :\n"
+        "- domaine : le domaine ou la discipline avec l'intitulé OFFICIEL des programmes du cycle de la classe "
+        "(par exemple au cycle 2 : « Questionner le monde – le vivant », « Français – lecture », "
+        "« Mathématiques – résolution de problèmes », « Enseignements artistiques – arts plastiques » ; jamais "
+        "« SVT » ni un intitulé du collège à l'école primaire) ;\n"
+        "- objectifs : le ou les objectifs de la séance, repris de la fiche de séance (1 à 2 lignes) ;\n"
+        "- description : description DÉTAILLÉE mais synthétique de CETTE séance (8 à 12 lignes) : place dans la "
+        "séquence, enchaînement des phases, ce que font concrètement les élèves, organisation, différenciation, rôle "
+        "de l'enseignante ; renvoie aux photos pertinentes « (photo 2) ». Ne recopie jamais la description d'une "
+        "autre séance.\n\nRéponds en JSON."
+    )
+    res = llm.chat_json(cfg, SYSTEME, user, SCHEMA_SEANCES, attendu=2500,
+                        progress=lambda f, m: progress(0.02 + 0.18 * f, "Séances observées — " + m))
+    seances = [
+        {"domaine": str(x.get("domaine", "")).strip(), "objectifs": str(x.get("objectifs", "")).strip(),
+         "description": str(x.get("description", "")).strip(), "deroulement": []}
+        for x in (res.get("seances") or []) if isinstance(x, dict)
+    ]
+    while len(seances) < max(num_enreg or [1]):
+        seances.append({"domaine": "", "objectifs": "", "description": "", "deroulement": []})
+    seances = seances[:4]
+
+    # --- 2. Déroulement fidèle de chaque séance (notes + enregistrement de la séance, par morceaux)
+    budget = max(6000, _budget_chars(cfg, 6500) - len(entete))
+    n_s = len(seances)
+    for idx, se in enumerate(seances, 1):
+        t = trans_seances.get(idx, "")
+        morceaux = _chunks_by_chars(t.split("\n"), budget) if t else [""]
+        lignes = []
+        for k, m in enumerate(morceaux):
+            base = 0.2 + 0.45 * ((idx - 1) + k / len(morceaux)) / n_s
+            user = (
+                entete
+                + f"SÉANCE CONCERNÉE : séance {idx} sur {n_s} – {se['domaine']} – {se['objectifs']}\n"
+                "(Si les notes ou documents concernent plusieurs séances, n'utilise que ce qui concerne celle-ci.)\n\n"
+                + (f"ENREGISTREMENT DE LA SÉANCE (partie {k + 1} sur {len(morceaux)}) — « E » = l'enseignante :\n{m}\n\n" if m else "")
+                + (f"Phases déjà relevées dans les parties précédentes : {', '.join(r['temps'] for r in lignes)}\n"
+                   "Continue à partir de là, sans les répéter.\n\n" if lignes else "")
+                + CONSIGNE_DEROULEMENT + "\nRéponds en JSON."
+            )
+            r = llm.chat_json(cfg, SYSTEME, user, SCHEMA_DEROULEMENT, attendu=3500,
+                              progress=lambda f, mm, base=base: progress(
+                                  base + 0.45 / n_s / len(morceaux) * f, f"Déroulement de la séance {idx} — {mm}"))
+            lignes += [
+                {key: str(x.get(key, "")).strip() for key in ("temps", "deroulement", "remarque", "dispositif", "organisation")}
+                for x in (r.get("deroulement") or []) if isinstance(x, dict)
+            ]
+        se["deroulement"] = horodater(lignes, adm.get("horaire", "") if idx == 1 else "")
+
+    # --- 3. Points discutés, avis sur l'entretien, langue, références
+    reste = (_budget_chars(cfg) - len(entete) - len(ana) - len(grille) - len(biblio) - len(CADRE_ANALYSE) - 5000)
+    extrait_trans = trans[: max(0, reste)] if reste > 2000 else ""
+    user = (
+        f"GRILLE ET ATTENTES :\n{grille}\n\n{CADRE_ANALYSE}\n" + entete
+        + f"SÉANCES OBSERVÉES :\n{_seances_resume(seances)}\n\n"
         + (f"ANALYSE DE L'ENTRETIEN (validée par la formatrice) :\n{ana}\n\n" if ana else "")
-        + (f"TRANSCRIPTION (extrait) :\n{extrait_trans}\n\n" if extrait_trans else "")
+        + (f"TRANSCRIPTION DE L'ENTRETIEN (extrait) :\n{extrait_trans}\n\n" if extrait_trans else "")
         + f"BIBLIOTHÈQUE DE RÉFÉRENCES AUTORISÉES :\n{biblio}\n\n"
-        + "Prépare les rubriques du bulletin officiel de visite :\n"
-        "- enseignements : domaine ou discipline + objectif(s) de la séance observée (2 à 3 lignes).\n"
-        "- description : description DÉTAILLÉE mais synthétique de la séance présentée (8 à 12 lignes) : "
-        "place de la séance dans la séquence, objectif, enchaînement des phases, ce que font concrètement les "
-        "élèves (activités, productions, supports, manipulations), organisation (collectif, binômes, individuel), "
-        "différenciation et rôle de l'enseignante. Quand une photo illustre une activité, renvoie-y entre "
-        "parenthèses, par exemple « (photo 2) ».\n"
-        "- deroulement : les phases de la séance, dans l'ordre. Pour chaque phase :\n"
-        "  · temps : heure de début et de fin si elles sont connues (notes de la formatrice, horaire de la séance) "
-        "ET durée, par exemple « 14h25 – 14h35 (10 min) – Rituel » ; sinon la durée seule « 10 min – Rituel » ;\n"
-        "  · deroulement : UNIQUEMENT ce qui a été OBSERVÉ pendant la phase (ce que fait l'enseignante, ce que font "
-        "les élèves), de façon factuelle, sans jugement ;\n"
-        "  · remarque : l'analyse ET le conseil de la formatrice (PEMF) sur cette phase, tirés de ses notes ou de "
-        "ses propos pendant l'entretien, en nommant la préoccupation concernée (pilotage, atmosphère, tissage, "
-        "étayage, objets de savoir). Commence par ce qui a bien fonctionné quand la formatrice l'a relevé. "
-        "Chaîne vide si la formatrice n'a rien dit sur cette phase ;\n"
-        "  · dispositif ; organisation matérielle.\n"
-        "  Liste vide si aucune source ne décrit les phases.\n"
-        "- points : les 3 sujets LES PLUS DISCUTÉS pendant l'entretien, traités de façon pointue et professionnelle "
-        "avec le cadre d'analyse ci-dessus. Pour chacun :\n"
-        "  · titre : la préoccupation de Bucheton concernée puis le sujet précis, par exemple "
-        "« Étayage – Difficultés des élèves lors du tri des animaux » ;\n"
-        "  · analyse (6 à 9 lignes) : 1) point d'appui : ce que la stagiaire réussit sur ce sujet (points forts, "
-        "compétences maîtrisées, réussites relevés dans l'analyse ou les notes), à omettre seulement si rien n'a été "
-        "relevé ; 2) constat précis (ce qui a été observé, à quel moment, chez quels élèves) ; 3) analyse avec le "
-        "vocabulaire professionnel (gestes professionnels, posture d'étayage de l'enseignante, postures des élèves, "
-        "écart entre tâche prescrite et activité réelle des élèves) ; 4) conseil opérationnel de la formatrice, "
-        "réalisable dès la prochaine séance, qui s'appuie sur ces réussites ;\n"
-        "  · ressources : 1 à 3 supports et ressources que la formatrice conseille sur ce point : ceux qu'elle a cités "
-        "pendant l'entretien et, s'ils correspondent au sujet, des références de la BIBLIOTHÈQUE AUTORISÉE, "
-        "recopiées exactement, séparées par « ; ». Aucune autre référence.\n"
-        "  Moins de 3 points si l'entretien n'en aborde pas 3.\n"
+        + "Prépare les rubriques suivantes du bulletin officiel :\n"
+        "- points : les 3 préoccupations (focales de Bucheton) LES PLUS DISCUTÉES pendant l'entretien, toutes "
+        "différentes, dans l'ordre d'importance. Pour chacune :\n"
+        "  · focale : pilotage, etayage, tissage, atmosphere ou objets_savoir ;\n"
+        "  · analyse : plusieurs sous-parties, UNE PAR LIGNE, chacune au format « Intitulé : texte ». Commence par "
+        "ce qui fonctionne (par exemple « La progression est cohérente… » ou « Points d'appui : … »), puis les "
+        "sous-parties utiles parmi : Objectif, Transitions, Gestion du temps et du matériel, Consignes, Variantes de "
+        "la tâche, Différenciation, Évaluation, Rappel des termes, Support, Vidéo, Posture… Chaque sous-partie : "
+        "constat précis (quand, quels élèves), analyse avec le vocabulaire professionnel (gestes professionnels, "
+        "postures d'étayage et des élèves, tâche prescrite / activité réelle), puis conseil concret de la formatrice "
+        "qui s'appuie sur les réussites. N'écris une sous-partie que si tu as quelque chose à y mettre ;\n"
+        "  · ressources : 1 à 3 supports et ressources que la formatrice conseille sur ce point : ceux cités pendant "
+        "l'entretien et, s'ils correspondent au sujet, des références de la BIBLIOTHÈQUE AUTORISÉE recopiées "
+        "exactement, séparées par « ; ». Jamais « transcription de l'entretien ». Aucune autre référence.\n"
         "- positifs / ameliorer : avis sur la façon dont la stagiaire a conduit l'ENTRETIEN (réflexivité, écoute, "
         "argumentation, prise de recul), en phrases courtes. Listes vides si rien ne le permet.\n"
         "- langue_observations : observation sur la maîtrise de la langue UNIQUEMENT si les sources en parlent, "
-        "sinon chaîne vide.\n"
-        "- references : la liste récapitulative des références à communiquer à la stagiaire à la fin de "
-        "l'entretien : celles citées pendant l'entretien et celles retenues dans les points ci-dessus, recopiées "
-        "exactement. N'en invente aucune.\n"
-        "Tout au long du bulletin, valorise les points forts de la stagiaire relevés dans les sources : un bulletin "
-        "formatif s'appuie sur ce qui fonctionne. N'invente aucun point fort.\n"
-        "N'écris jamais de note, de positionnement (TI, I, S, TS) ni d'appréciation chiffrée : c'est la formatrice "
-        "qui décide. N'invente aucune observation.\n\nRéponds en JSON."
+        "sinon chaîne vide. Relis l'orthographe.\n"
+        "- references : la liste récapitulative des références à communiquer à la stagiaire (celles citées pendant "
+        "l'entretien et celles retenues dans les points), recopiées exactement.\n"
+        "Valorise les points forts de la stagiaire relevés dans les sources, sans en inventer. N'écris jamais de "
+        "note, de positionnement (TI, I, S, TS) ni d'appréciation chiffrée. N'invente aucune observation.\n\n"
+        "Réponds en JSON."
     )
-    res = llm.chat_json(cfg, SYSTEME, user, SCHEMA_BULLETIN, attendu=6500,
-                        progress=lambda f, m: progress(0.05 + 0.93 * f, m))
-    sources = trans + "\n" + notes + "\n" + docs
-    points = []
-    for p in (res.get("points") or [])[:3]:
-        if not isinstance(p, dict):
+    res = llm.chat_json(cfg, SYSTEME, user, SCHEMA_BULLETIN, attendu=5000,
+                        progress=lambda f, m: progress(0.66 + 0.33 * f, "Points discutés — " + m))
+    sources = trans + "\n" + notes + "\n" + docs + "\n" + "\n".join(trans_seances.values())
+    points, vues = [], set()
+    for p in (res.get("points") or []):
+        if not isinstance(p, dict) or len(points) == 3:
             continue
+        focale = p.get("focale") if p.get("focale") in FOCALES else ""
+        if focale in vues:
+            continue
+        vues.add(focale)
         ressources = str(p.get("ressources", "")).strip()
         verif = verifier_references([r for r in re.split(r"\s*;\s*|\n", ressources) if r.strip()], biblio, sources)
         points.append({
-            "titre": str(p.get("titre", "")).strip(), "analyse": str(p.get("analyse", "")).strip(),
+            "titre": f"{len(points) + 1}. {FOCALES[focale]}" if focale else "",
+            "focale": focale,
+            "analyse": str(p.get("analyse", "")).strip(),
             "ressources": ressources,
             "ressources_a_verifier": [r["texte"] for r in verif if not r["verifie"]],
         })
     while len(points) < 3:
-        points.append({"titre": "", "analyse": "", "ressources": "", "ressources_a_verifier": []})
-    deroulement = [
-        {k: str(r.get(k, "")).strip() for k in ("temps", "deroulement", "remarque", "dispositif", "organisation")}
-        for r in (res.get("deroulement") or []) if isinstance(r, dict)
-    ]
+        points.append({"titre": "", "focale": "", "analyse": "", "ressources": "", "ressources_a_verifier": []})
     return {
-        "enseignements": str(res.get("enseignements", "")).strip(),
-        "description": str(res.get("description", "")).strip(),
-        "deroulement": horodater(deroulement, adm.get("horaire", "")),
+        "seances": seances,
         "points": points,
         "positifs": [str(x).strip() for x in res.get("positifs") or [] if str(x).strip()],
         "ameliorer": [str(x).strip() for x in res.get("ameliorer") or [] if str(x).strip()],

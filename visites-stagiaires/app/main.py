@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -317,15 +317,31 @@ def get_photo(vid: str, pid: str):
 AUDIO_EXT = {".m4a", ".mp3", ".wav", ".webm", ".ogg", ".mp4", ".aac", ".flac", ".mov", ".caf", ".opus"}
 
 
+def _cible(type_: str, seance) -> dict:
+    """Ce que contient l'enregistrement : l'entretien, ou la séance n° 1, 2… observée en classe."""
+    if type_ == "seance":
+        try:
+            n = max(1, min(4, int(seance or 1)))
+        except (TypeError, ValueError):
+            n = 1
+        return {"type": "seance", "seance": n}
+    return {"type": "entretien", "seance": 0}
+
+
+def _nom_cible(c: dict) -> str:
+    return f"Séance {c['seance']}" if c["type"] == "seance" else "Entretien"
+
+
 @app.post("/api/visites/{vid}/enregistrement")
 def rec_start(vid: str, data: dict = Body(default={})):
     mime = (data.get("mime") or "").lower()
+    cible = _cible(data.get("type", "entretien"), data.get("seance"))
     ext = ".mp4" if "mp4" in mime else ".ogg" if "ogg" in mime else ".webm"
     rid = uuid.uuid4().hex[:8]
     entry = {
-        "id": rid, "nom": f"Enregistrement du {datetime.now():%d/%m/%Y à %H:%M}",
+        "id": rid, "nom": f"{_nom_cible(cible)} – enregistrée le {datetime.now():%d/%m/%Y à %H:%M}",
         "brut": f"rec-{rid}{ext}", "fichier": "", "duree": 0, "etat": "en_cours",
-        "cree": datetime.now().isoformat(timespec="seconds"),
+        "cree": datetime.now().isoformat(timespec="seconds"), **cible,
     }
     (storage.visit_dir(vid) / "audio").mkdir(parents=True, exist_ok=True)
     storage.update_visit(vid, lambda v: v["audios"].append(entry))
@@ -374,7 +390,8 @@ def rec_stop(vid: str, rid: str):
 
 
 @app.post("/api/visites/{vid}/audios")
-async def import_audio(vid: str, fichier: UploadFile = File(...)):
+async def import_audio(vid: str, fichier: UploadFile = File(...), type: str = Form("entretien"),
+                       seance: int = Form(1)):
     name = Path(fichier.filename or "audio").name
     ext = Path(name).suffix.lower()
     if ext not in AUDIO_EXT:
@@ -385,10 +402,29 @@ async def import_audio(vid: str, fichier: UploadFile = File(...)):
     with open(adir / f"import-{aid}{ext}", "wb") as f:
         while chunk := await fichier.read(1 << 20):
             f.write(chunk)
-    entry = {"id": aid, "nom": name, "brut": f"import-{aid}{ext}", "fichier": "", "duree": 0,
-             "etat": "en_cours", "cree": datetime.now().isoformat(timespec="seconds")}
+    cible = _cible(type, seance)
+    entry = {"id": aid, "nom": f"{_nom_cible(cible)} – {name}", "brut": f"import-{aid}{ext}", "fichier": "", "duree": 0,
+             "etat": "en_cours", "cree": datetime.now().isoformat(timespec="seconds"), **cible}
     storage.update_visit(vid, lambda v: v["audios"].append(entry))
     return _finalise_audio(vid, aid)
+
+
+@app.patch("/api/visites/{vid}/audios/{aid}")
+def patch_audio(vid: str, aid: str, data: dict = Body(...)):
+    """Change ce que contient un enregistrement (entretien / séance n°)."""
+    cible = _cible(data.get("type", "entretien"), data.get("seance"))
+
+    def apply(v):
+        for a in v["audios"]:
+            if a["id"] == aid:
+                a.update(cible)
+                ancien = a.get("nom", "").split(" – ", 1)
+                a["nom"] = f"{_nom_cible(cible)} – {ancien[-1]}"
+                # Les étiquettes de locuteurs ne veulent plus dire la même chose : on les remet à zéro.
+                for sg in v["transcription"]["segments"]:
+                    if sg.get("audio") == aid and not sg.get("verrouille"):
+                        sg["locuteur"] = "?"
+    return storage.update_visit(vid, apply)
 
 
 @app.get("/api/visites/{vid}/audios/{aid}")
@@ -501,8 +537,17 @@ def interlocuteurs(vid: str):
     _need_segments(vid)
 
     def work(s, progress):
-        segs = storage.get_visit(vid)["transcription"]["segments"]
-        analysis.attribuer_interlocuteurs(s["ia"], segs, progress)
+        v = storage.get_visit(vid)
+        types = analysis.types_audios(v)
+        segs = v["transcription"]["segments"]
+        entretien = [x for x in segs if types.get(x.get("audio"), ("entretien", 1))[0] != "seance"]
+        seance = [x for x in segs if types.get(x.get("audio"), ("entretien", 1))[0] == "seance"]
+        part = len(entretien) / max(1, len(segs))
+        if entretien:
+            analysis.attribuer_interlocuteurs(s["ia"], entretien, lambda f, m="": progress(f * part, "Entretien — " + m))
+        if seance:
+            analysis.attribuer_interlocuteurs(s["ia"], seance, lambda f, m="": progress(part + f * (1 - part), "Séance — " + m),
+                                              mode="seance")
         par_id = {x["id"]: x for x in segs}
 
         def apply(v):
@@ -553,8 +598,10 @@ def preremplir(vid: str):
 
         def apply(v):
             b = v["bulletin"]
-            for k in ("enseignements", "description", "deroulement", "points", "positifs", "ameliorer"):
+            for k in ("seances", "points", "positifs", "ameliorer"):
                 b[k] = res[k]
+            # Anciens champs (une seule séance, avant la v1.8) : remplacés par « seances »
+            b["enseignements"], b["description"], b["deroulement"] = "", "", []
             b["langue"]["observations"] = res["langue_observations"]
             b["references"] = res["references"]
             b["prerempli"] = datetime.now().isoformat(timespec="seconds")

@@ -277,29 +277,47 @@ def fill_bulletin(visit: dict, out_path: Path, modele: Path = MODELE, photos: li
                         _write_cell(cells[i + 1], "X", bold=True, align="center")
 
     # --- Enseignements observés + description
-    p = d.paragraph_starting("ENSEIGNEMENTS OBSERVÉS")
-    if p is not None and b.get("enseignements"):
-        anchor = p
-        for ln in b["enseignements"].split("\n"):
-            anchor = _insert_after(anchor, _new_paragraph(ln))
-    p = d.paragraph_starting("Description de la")
-    if p is not None and (b.get("description") or photos):
-        anchor = p
-        for ln in (b.get("description") or "").split("\n"):
-            if ln.strip():
-                anchor = _insert_after(anchor, _new_paragraph(ln))
+    seances = seances_de(b)
+    p_ens = d.paragraph_starting("ENSEIGNEMENTS OBSERVÉS")
+    p_desc = d.paragraph_starting("Description de la")
+    if p_ens is not None and p_desc is not None and (seances or photos):
+        # Le libellé « Description de la (des) séance(s) présentée(s) » est répété pour chaque séance.
+        libelle_desc = copy.deepcopy(p_desc)
+        p_desc.getparent().remove(p_desc)
+        anchor = p_ens
+        plusieurs = len(seances) > 1
+        for n, se in enumerate(seances, 1):
+            if n > 1:
+                anchor = _insert_after(anchor, _new_paragraph(""))
+            if plusieurs:
+                anchor = _insert_after(anchor, _new_paragraph(f"Séance numéro {n} :", bold=True))
+            for lib, val in (("Domaine ou discipline : ", se.get("domaine", "")),
+                             ("Objectif(s) de la séance observée : ", se.get("objectifs", ""))):
+                if str(val).strip():
+                    para = _new_paragraph()
+                    para.append(_make_run(lib, bold=True))
+                    para.append(_make_run(str(val).strip()))
+                    anchor = _insert_after(anchor, para)
+            anchor = _insert_after(anchor, copy.deepcopy(libelle_desc))
+            for ln in str(se.get("description", "")).split("\n"):
+                if ln.strip():
+                    anchor = _insert_after(anchor, _new_paragraph(ln))
+        if not seances:
+            anchor = _insert_after(anchor, copy.deepcopy(libelle_desc))
         if photos:
             anchor = _inserer_photos(d, anchor, photos)
 
     # --- Tableau de déroulement
     t = d.table_with("Temps(minutage")
     if t is not None:
-        _fill_repeating_rows(
-            t, 1,
-            [[r.get("temps", ""), cellule_deroulement(r), r.get("dispositif", ""), r.get("organisation", "")]
-             for r in b.get("deroulement", []) if any(str(v).strip() for v in r.values())],
-            clear_template=True,
-        )
+        lignes = []
+        for n, se in enumerate(seances, 1):
+            phases = [r for r in se.get("deroulement", []) if any(str(v).strip() for v in r.values())]
+            if n > 1 and phases:
+                lignes.append({"separateur": f"{n}ème séance" + (f" – {se['domaine']}" if se.get("domaine") else "")})
+            lignes += [[r.get("temps", ""), cellule_deroulement(r), r.get("dispositif", ""), r.get("organisation", "")]
+                       for r in phases]
+        _fill_repeating_rows(t, 1, lignes, clear_template=True)
 
     # --- Trois points discutés
     t = d.table_with("POINT DISCUT")
@@ -310,7 +328,7 @@ def fill_bulletin(visit: dict, out_path: Path, modele: Path = MODELE, photos: li
             r_ana, r_res = rows[1 + 2 * i], rows[2 + 2 * i]
             if pt.get("titre"):
                 _write_cell(_cells(r_ana)[0], pt["titre"], keep_label=True)
-            _write_cell(_cells(r_ana)[1], pt.get("analyse", ""))
+            _write_sous_parties(_cells(r_ana)[1], pt.get("analyse", ""))
             _write_cell(_cells(r_res)[1], pt.get("ressources", ""))
 
     # --- Avis sur l'entretien
@@ -374,6 +392,50 @@ def fill_bulletin(visit: dict, out_path: Path, modele: Path = MODELE, photos: li
     return out_path
 
 
+def seances_de(b: dict) -> list[dict]:
+    """Les séances observées. Les visites d'avant la v1.8 (une seule séance) sont converties à la volée."""
+    seances = [se for se in (b.get("seances") or []) if isinstance(se, dict)]
+    if seances:
+        return seances
+    if b.get("enseignements") or b.get("description") or b.get("deroulement"):
+        return [{"domaine": "", "objectifs": b.get("enseignements", ""), "description": b.get("description", ""),
+                 "deroulement": b.get("deroulement", [])}]
+    return []
+
+
+def _ligne_separatrice(tr, texte: str):
+    """Transforme une ligne du tableau en une seule cellule fusionnée : « 2ème séance – … »."""
+    cells = _cells(tr)
+    for extra in cells[1:]:
+        tr.remove(extra)
+    tc = cells[0]
+    tcpr = tc.find(qn("w:tcPr"))
+    if tcpr is None:
+        tcpr = OxmlElement("w:tcPr")
+        tc.insert(0, tcpr)
+    span = OxmlElement("w:gridSpan")
+    span.set(qn("w:val"), str(len(cells)))
+    tcpr.append(span)
+    _clear_cell_text(tc)
+    _shade(tc, "DEEAF6")
+    _write_cell(tc, texte, bold=True)
+
+
+def _write_sous_parties(tc, texte: str):
+    """Analyse d'un point discuté : chaque ligne « Intitulé : texte » avec l'intitulé en gras."""
+    lignes = [ln for ln in str(texte or "").split("\n") if ln.strip()]
+    if not lignes:
+        return
+    parts = []
+    for ln in lignes:
+        m = re.match(r"^\s*([^:]{2,45}?)\s*:\s+(.+)$", ln)
+        if m and not re.search(r"[.!?]", m.group(1)):
+            parts.append((m.group(1).strip() + " : ", m.group(2).strip()))
+        else:
+            parts.append(("", ln.strip()))
+    _write_labeled(tc, parts)
+
+
 def cellule_deroulement(r: dict):
     """Contenu de la colonne Déroulement : d'abord l'observé, puis l'analyse et le conseil de la formatrice."""
     obs, rem = str(r.get("deroulement", "")).strip(), str(r.get("remarque", "")).strip()
@@ -397,7 +459,8 @@ def _write_labeled(tc, parts):
     anchor = None
     for lab, txt in parts:
         p = first if anchor is None else _insert_after(anchor, _new_paragraph(like=first))
-        p.append(_make_run(lab, bold=True))
+        if lab:
+            p.append(_make_run(lab, bold=True))
         p.append(_make_run(txt))
         anchor = p
 
@@ -445,6 +508,9 @@ def _fill_repeating_rows(tbl, template_idx: int, data: list[list[str]], clear_te
         if i:
             anchor.addnext(tr)
         anchor = tr
+        if isinstance(values, dict):
+            _ligne_separatrice(tr, values.get("separateur", ""))
+            continue
         for tc, val in zip(_cells(tr), values):
             _clear_cell_text(tc)
             if isinstance(val, list):
@@ -480,10 +546,16 @@ def champs_manquants(visit: dict) -> list[str]:
         (adm.get("circonscription"), "Circonscription"),
         (adm.get("commune"), "Commune"),
         (any(f.get("nom") for f in adm.get("formateurs", [])), "Formateur(s)"),
-        (b.get("enseignements"), "Enseignements observés"),
-        (b.get("description"), "Description de la séance"),
-        (b.get("deroulement"), "Tableau de déroulement"),
     ]
+    seances = seances_de(b) or [{}]
+    for n, se in enumerate(seances, 1):
+        suffixe = f" (séance {n})" if len(seances) > 1 else ""
+        checks += [
+            (se.get("domaine"), "Domaine ou discipline" + suffixe),
+            (se.get("objectifs"), "Objectif(s) de la séance" + suffixe),
+            (se.get("description"), "Description de la séance" + suffixe),
+            (se.get("deroulement"), "Tableau de déroulement" + suffixe),
+        ]
     for i, pt in enumerate((b.get("points") or [])[:3], 1):
         checks.append((pt.get("analyse"), f"Point discuté {i}"))
     checks += [

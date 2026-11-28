@@ -255,3 +255,4 @@ dialog::backdrop { background: rgba(15, 25, 45, .45); }
 .photo { margin: 0; padding: 10px; border: 1px solid var(--bord); border-radius: 14px; background: #fff; display: grid; gap: 8px; }
 .photo img { width: 100%; aspect-ratio: 4 / 3; object-fit: contain; border-radius: 10px; background: var(--ciel); }
 .photo input { font-size: 13.5px; padding: 6px 9px; }
+.loc.EL { background: #e9f7ef; color: #1d7a4c; border-color: #bfe5cf; }
