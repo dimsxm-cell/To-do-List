@@ -25,9 +25,13 @@ et l'activité réellement mise en œuvre par les élèves.
 3. Le référentiel des compétences professionnelles des métiers du professorat (2013) pour situer les
 compétences observées (P1 à P5, CC1 à CC14).
 
-Pour chaque point discuté : 1) un constat précis et daté (ce qui a été observé, par qui, à quel moment) ;
-2) une analyse qui nomme la ou les préoccupations concernées et utilise le vocabulaire ci-dessus ;
-3) un conseil opérationnel, réalisable dès la prochaine séance.
+Valoriser les points forts : toujours partir de ce qui fonctionne. Les réussites et compétences
+de la stagiaire relevées par la formatrice sont des points d'appui sur lesquels construire les conseils.
+
+Pour chaque point discuté : 1) le point d'appui : ce que la stagiaire réussit sur ce sujet (s'il a été relevé) ;
+2) un constat précis et daté (ce qui a été observé, par qui, à quel moment) ;
+3) une analyse qui nomme la ou les préoccupations concernées et utilise le vocabulaire ci-dessus ;
+4) un conseil opérationnel, réalisable dès la prochaine séance, qui s'appuie sur ces réussites.
 """
 
 REFERENCES_INTEGREES = [

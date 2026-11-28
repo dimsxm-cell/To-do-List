@@ -386,7 +386,8 @@ def analyse_reflexive(cfg: dict, visit: dict, grille: str, progress=lambda p, m=
         user = (
             contexte + f"TRANSCRIPTION DE L'ENTRETIEN :\n{morceaux[0]}\n\n" + CONSIGNE_ANALYSE
             + "\nRédige enfin D : un bilan réflexif de 8 à 12 lignes, rédigé, structuré (séance observée, "
-            "analyse de la stagiaire, points d'appui, axes de progrès, conseils), uniquement à partir des "
+            "points forts et réussites de la stagiaire, son analyse réflexive, axes de progrès, conseils qui "
+            "s'appuient sur ces points forts), uniquement à partir des "
             "éléments ci-dessus.\n\nRéponds en JSON."
         )
         res = llm.chat_json(cfg, SYSTEME, user, _schema_analyse(True), attendu=6500,
@@ -434,7 +435,8 @@ def _fusionner(cfg, partiels, grille, notes, progress=lambda p, m="": None):
         f"GRILLE :\n{grille}\n\n" + (f"NOTES DE LA FORMATRICE :\n{notes}\n\n" if notes else "")
         + f"ÉLÉMENTS RELEVÉS DANS L'ENTRETIEN :\n{resume}\n\n"
         "Rédige D : un bilan réflexif de 8 à 12 lignes, rédigé, structuré (séance observée, analyse de la "
-        "stagiaire, points d'appui, axes de progrès, conseils), uniquement à partir de ces éléments. "
+        "points forts et réussites de la stagiaire, son analyse réflexive, axes de progrès, conseils qui s'appuient "
+        "sur ces points forts), uniquement à partir de ces éléments. "
         "Laisse « doublons » vide.\n\nRéponds en JSON."
     )
     out = llm.chat_json(cfg, SYSTEME, user, SCHEMA_FUSION, attendu=1500,
@@ -630,17 +632,20 @@ def preremplir_bulletin(cfg: dict, visit: dict, grille: str, progress=lambda p, 
         "les élèves), de façon factuelle, sans jugement ;\n"
         "  · remarque : l'analyse ET le conseil de la formatrice (PEMF) sur cette phase, tirés de ses notes ou de "
         "ses propos pendant l'entretien, en nommant la préoccupation concernée (pilotage, atmosphère, tissage, "
-        "étayage, objets de savoir). Chaîne vide si la formatrice n'a rien dit sur cette phase ;\n"
+        "étayage, objets de savoir). Commence par ce qui a bien fonctionné quand la formatrice l'a relevé. "
+        "Chaîne vide si la formatrice n'a rien dit sur cette phase ;\n"
         "  · dispositif ; organisation matérielle.\n"
         "  Liste vide si aucune source ne décrit les phases.\n"
         "- points : les 3 sujets LES PLUS DISCUTÉS pendant l'entretien, traités de façon pointue et professionnelle "
         "avec le cadre d'analyse ci-dessus. Pour chacun :\n"
         "  · titre : la préoccupation de Bucheton concernée puis le sujet précis, par exemple "
         "« Étayage – Difficultés des élèves lors du tri des animaux » ;\n"
-        "  · analyse (5 à 8 lignes) : 1) constat précis (ce qui a été observé, à quel moment, chez quels élèves) ; "
-        "2) analyse avec le vocabulaire professionnel (gestes professionnels, posture d'étayage de l'enseignante, "
-        "postures des élèves, écart entre tâche prescrite et activité réelle des élèves) ; 3) conseil opérationnel "
-        "de la formatrice, réalisable dès la prochaine séance ;\n"
+        "  · analyse (6 à 9 lignes) : 1) point d'appui : ce que la stagiaire réussit sur ce sujet (points forts, "
+        "compétences maîtrisées, réussites relevés dans l'analyse ou les notes), à omettre seulement si rien n'a été "
+        "relevé ; 2) constat précis (ce qui a été observé, à quel moment, chez quels élèves) ; 3) analyse avec le "
+        "vocabulaire professionnel (gestes professionnels, posture d'étayage de l'enseignante, postures des élèves, "
+        "écart entre tâche prescrite et activité réelle des élèves) ; 4) conseil opérationnel de la formatrice, "
+        "réalisable dès la prochaine séance, qui s'appuie sur ces réussites ;\n"
         "  · ressources : 1 à 3 supports et ressources que la formatrice conseille sur ce point : ceux qu'elle a cités "
         "pendant l'entretien et, s'ils correspondent au sujet, des références de la BIBLIOTHÈQUE AUTORISÉE, "
         "recopiées exactement, séparées par « ; ». Aucune autre référence.\n"
@@ -652,6 +657,8 @@ def preremplir_bulletin(cfg: dict, visit: dict, grille: str, progress=lambda p, 
         "- references : la liste récapitulative des références à communiquer à la stagiaire à la fin de "
         "l'entretien : celles citées pendant l'entretien et celles retenues dans les points ci-dessus, recopiées "
         "exactement. N'en invente aucune.\n"
+        "Tout au long du bulletin, valorise les points forts de la stagiaire relevés dans les sources : un bulletin "
+        "formatif s'appuie sur ce qui fonctionne. N'invente aucun point fort.\n"
         "N'écris jamais de note, de positionnement (TI, I, S, TS) ni d'appréciation chiffrée : c'est la formatrice "
         "qui décide. N'invente aucune observation.\n\nRéponds en JSON."
     )

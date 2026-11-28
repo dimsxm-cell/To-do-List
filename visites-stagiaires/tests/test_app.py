@@ -493,3 +493,23 @@ def test_bibliotheque_integree_reconnue():
     assert len(REFERENCES_INTEGREES) >= 20 and biblio.endswith("Ma référence perso")
     res = verifier_references(["R. Goigoux et S. Cèbe, Apprendre à lire à l'école, Retz, 2006", "Ma référence perso"], biblio, "")
     assert all(r["verifie"] and r["source"] == "bibliotheque" for r in res)
+
+
+def test_points_forts_valorises_dans_les_consignes(monkeypatch):
+    from app import analysis, llm
+
+    vu = []
+
+    def fake(cfg, system, user, schema, timeout=0, **kw):
+        vu.append(user)
+        return {"enseignements": "", "description": "", "deroulement": [], "points": [], "positifs": [],
+                "ameliorer": [], "langue_observations": "", "references": []}
+
+    monkeypatch.setattr(llm, "chat_json", fake)
+    v = {"admin": {}, "documents": [], "notes_formatrice": "Très bonne gestion du groupe.", "photos": [],
+         "analyse": {"B": {"points_forts": [{"texte": "Consigne claire", "extrait": "x", "verifie": True}]}},
+         "transcription": {"segments": []}}
+    analysis.preremplir_bulletin({"contexte": 16384}, v, "grille")
+    consignes = vu[0]
+    assert "point d'appui" in consignes and "valorise les points forts" in consignes
+    assert "Consigne claire" in consignes  # les points forts de l'analyse sont bien transmis
