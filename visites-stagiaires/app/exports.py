@@ -193,19 +193,31 @@ def _seance(d, visit: dict) -> None:
         p = d.add_paragraph()
         p.paragraph_format.space_before = Pt(6)
         p.add_run("Déroulement").bold = True
-        t = d.add_table(rows=1, cols=4)
+        t = d.add_table(rows=1, cols=5)
         t.style = "Table Grid"
-        for cell, titre in zip(t.rows[0].cells, ("Horaire / durée", "Déroulement", "Dispositif", "Organisation matérielle")):
+        for cell, titre in zip(t.rows[0].cells, ("Horaire / durée", "Déroulement observé",
+                                                 "Analyse et conseil de la formatrice", "Dispositif",
+                                                 "Organisation matérielle")):
             cell.text = ""
             run = cell.paragraphs[0].add_run(titre)
             run.bold = True
             run.font.size = Pt(9.5)
         for r in lignes:
             cells = t.add_row().cells
-            for cell, k in zip(cells, ("temps", "deroulement", "dispositif", "organisation")):
+            for cell, k in zip(cells, ("temps", "deroulement", "remarque", "dispositif", "organisation")):
                 cell.text = ""
                 run = cell.paragraphs[0].add_run(str(r.get(k, "")))
                 run.font.size = Pt(9.5)
+        # Colonnes de texte plus larges (largeur utile d'une page A4 : environ 16 cm)
+        from docx.shared import Cm
+
+        t.autofit = False
+        largeurs = (2.5, 4.6, 4.6, 2.2, 2.4)
+        for col, w in zip(t.columns, largeurs):
+            col.width = Cm(w)  # grille du tableau (lue par LibreOffice)
+        for row in t.rows:
+            for cell, w in zip(row.cells, largeurs):
+                cell.width = Cm(w)  # largeur de chaque cellule (lue par Word)
 
 
 def references(visit: dict) -> list[str]:

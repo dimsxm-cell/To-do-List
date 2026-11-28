@@ -230,6 +230,9 @@ async function pageParametres() {
     </div>
     <div class="carte"><h2>Votre bibliothèque de références</h2>
       <div class="aide">Une référence par ligne (ouvrage, site Éduscol, document officiel, outil), avec son lien si vous voulez. À chaque visite, l'IA y choisit celles qui correspondent aux points discutés, en plus de celles citées pendant l'entretien. Elle n'en invente jamais d'autres.</div>
+      <details style="margin-bottom:10px"><summary class="small"><b>Bibliothèque intégrée</b> (${(S.etat?.references_integrees || []).length} références : Éduscol, guides officiels, Cnesco, Bucheton, Goigoux…) — toujours disponible</summary>
+        <ul class="small">${(S.etat?.references_integrees || []).map((r) => `<li>${esc(r)}</li>`).join("")}</ul></details>
+      <label>Vos références en plus</label>
       <textarea data-k="references" rows="8" placeholder="Ex. : Éduscol – Résoudre des problèmes au cycle 2 : https://eduscol.education.fr/…">${esc(s.references || "")}</textarea></div>
     <div class="carte"><h2>Vocabulaire du métier</h2>
       <p class="muted small">Aide la transcription à bien écrire les sigles et termes (REP+, AESH, Éduscol…).</p>
@@ -904,8 +907,8 @@ function stepBulletin(p) {
       <textarea class="auto" rows="9" data-bind="bulletin.description" placeholder="${AFAIRE}">${esc(b.description)}</textarea>
       <h3>Déroulement</h3>
       <div class="muted small" style="margin-bottom:6px">Astuce : avec l'horaire de la séance (étape Infos) et les durées, l'appli note les heures de chaque phase, par exemple « 14h25 – 14h35 (10 min) ».</div>
-      <table class="table-der"><thead><tr><th style="width:18%">Horaire / durée</th><th>Déroulement</th><th style="width:16%">Dispositif</th><th style="width:20%">Organisation matérielle</th><th style="width:34px"></th></tr></thead>
-        <tbody>${b.deroulement.map((r, i) => `<tr>${["temps", "deroulement", "dispositif", "organisation"].map((k) => `<td><textarea class="auto" rows="2" data-bind="bulletin.deroulement.${i}.${k}">${esc(r[k])}</textarea></td>`).join("")}<td><button class="btn mini danger" data-del-row="${i}">✕</button></td></tr>`).join("")}</tbody></table>
+      <table class="table-der"><thead><tr><th style="width:15%">Horaire / durée</th><th>Déroulement observé</th><th style="width:27%">Analyse et conseil de la formatrice</th><th style="width:12%">Dispositif</th><th style="width:15%">Organisation matérielle</th><th style="width:34px"></th></tr></thead>
+        <tbody>${b.deroulement.map((r, i) => `<tr>${["temps", "deroulement", "remarque", "dispositif", "organisation"].map((k) => `<td><textarea class="auto" rows="2" data-bind="bulletin.deroulement.${i}.${k}" ${k === "remarque" ? `placeholder="Rien noté pour cette phase"` : ""}>${esc(r[k] || "")}</textarea></td>`).join("")}<td><button class="btn mini danger" data-del-row="${i}">✕</button></td></tr>`).join("")}</tbody></table>
       <button class="btn mini" id="ajLigne" style="margin-top:6px">+ Ajouter une phase</button>
     </div>
     <div class="carte"><h2>Remarques et conseils portant sur la (les) séance(s)</h2>
@@ -914,7 +917,8 @@ function stepBulletin(p) {
           <div class="grille" style="gap:8px">
             <div><label>Intitulé</label><input type="text" data-bind="bulletin.points.${i}.titre" value="${esc(pt.titre)}" placeholder="${AFAIRE}"></div>
             <div><label>Éléments d'analyse et conseils</label><textarea class="auto" rows="3" data-bind="bulletin.points.${i}.analyse" placeholder="${AFAIRE}">${esc(pt.analyse)}</textarea></div>
-            <div><label>Supports et ressources conseillés</label><textarea class="auto" rows="1" data-bind="bulletin.points.${i}.ressources" placeholder="${AFAIRE}">${esc(pt.ressources)}</textarea></div>
+            <div><label>Supports et ressources conseillés</label><textarea class="auto" rows="2" data-bind="bulletin.points.${i}.ressources" placeholder="${AFAIRE}">${esc(pt.ressources)}</textarea>
+              ${(pt.ressources_a_verifier || []).map((r) => `<div class="alerte" style="margin:6px 0 0">⚠ Référence hors bibliothèque, à vérifier avant de la conseiller : « ${esc(r)} »</div>`).join("")}</div>
           </div></div>`).join("")}
     </div>
     <div class="carte"><h2>Avis sur le déroulement de l'entretien</h2>
@@ -945,13 +949,21 @@ function stepBulletin(p) {
     </div>`;
   bind(p);
   $("#preremplir").onclick = () => (!b.prerempli || confirm("Remplacer les rubriques déjà rédigées par une nouvelle proposition ? (positionnement, note et langue sont conservés)")) && startJob(`/api/visites/${v.id}/preremplir`);
+  // Une ressource corrigée par la formatrice est validée par elle : l'alerte disparaît.
+  p.addEventListener("input", (e) => {
+    const m = /^bulletin\.points\.(\d)\.ressources$/.exec(e.target.dataset?.bind || "");
+    if (m && b.points[+m[1]].ressources_a_verifier?.length) {
+      b.points[+m[1]].ressources_a_verifier = [];
+      e.target.parentElement.querySelectorAll(".alerte").forEach((x) => x.remove());
+    }
+  });
   $("#references").addEventListener("input", (e) => {
     // Ce que la formatrice écrit ou garde est validé par elle.
     b.references = e.target.value.split("\n").map((x) => x.replace(/^[-•]\s*/, "").trim()).filter(Boolean)
       .map((texte) => ({ texte, source: "formatrice", verifie: true }));
     save({ bulletin: b });
   });
-  $("#ajLigne").onclick = () => { b.deroulement.push({ temps: "", deroulement: "", dispositif: "", organisation: "" }); save({ bulletin: b }); stepBulletin(p); };
+  $("#ajLigne").onclick = () => { b.deroulement.push({ temps: "", deroulement: "", remarque: "", dispositif: "", organisation: "" }); save({ bulletin: b }); stepBulletin(p); };
   p.onclick = (e) => {
     const x = e.target.closest("button");
     if (!x) return;

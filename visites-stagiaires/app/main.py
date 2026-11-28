@@ -12,7 +12,7 @@ from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, analysis, audio, bulletin, documents, exports, jobs, llm, photos, storage
+from . import __version__, analysis, audio, bulletin, documents, exports, jobs, llm, photos, referentiel, storage
 from .defaults import OUTILS
 
 STATIC = Path(__file__).parent / "static"
@@ -63,6 +63,7 @@ def etat():
         "transcription": {"moteur": audio.engine_name(s["transcription"]["moteur"]), "modele": s["transcription"]["modele"]},
         "pdf": bool(exports._soffice()) or Path("/Applications/Microsoft Word.app").exists(),
         "outils": [{"cle": k, "libelle": v} for k, v in OUTILS],
+        "references_integrees": referentiel.REFERENCES_INTEGREES,
     }
 
 

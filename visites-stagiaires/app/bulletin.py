@@ -296,7 +296,7 @@ def fill_bulletin(visit: dict, out_path: Path, modele: Path = MODELE, photos: li
     if t is not None:
         _fill_repeating_rows(
             t, 1,
-            [[r.get("temps", ""), r.get("deroulement", ""), r.get("dispositif", ""), r.get("organisation", "")]
+            [[r.get("temps", ""), cellule_deroulement(r), r.get("dispositif", ""), r.get("organisation", "")]
              for r in b.get("deroulement", []) if any(str(v).strip() for v in r.values())],
             clear_template=True,
         )
@@ -374,6 +374,34 @@ def fill_bulletin(visit: dict, out_path: Path, modele: Path = MODELE, photos: li
     return out_path
 
 
+def cellule_deroulement(r: dict):
+    """Contenu de la colonne Déroulement : d'abord l'observé, puis l'analyse et le conseil de la formatrice."""
+    obs, rem = str(r.get("deroulement", "")).strip(), str(r.get("remarque", "")).strip()
+    if not rem:
+        return obs
+    return [("Observé : ", obs), ("Analyse et conseil : ", rem)]
+
+
+def _write_labeled(tc, parts):
+    """Écrit des paragraphes « Libellé en gras : texte » dans une cellule."""
+    parts = [(lab, txt) for lab, txt in parts if str(txt).strip()]
+    if not parts:
+        return
+    paras = tc.findall(qn("w:p"))
+    first = paras[0]
+    for r in first.findall(qn("w:r")):
+        first.remove(r)
+    for extra in paras[1:]:
+        if not _text(extra).strip():
+            tc.remove(extra)
+    anchor = None
+    for lab, txt in parts:
+        p = first if anchor is None else _insert_after(anchor, _new_paragraph(like=first))
+        p.append(_make_run(lab, bold=True))
+        p.append(_make_run(txt))
+        anchor = p
+
+
 def _first_text_paragraph(tc):
     for p in tc.findall(qn("w:p")):
         if _text(p).strip():
@@ -419,7 +447,9 @@ def _fill_repeating_rows(tbl, template_idx: int, data: list[list[str]], clear_te
         anchor = tr
         for tc, val in zip(_cells(tr), values):
             _clear_cell_text(tc)
-            if str(val).strip():
+            if isinstance(val, list):
+                _write_labeled(tc, val)
+            elif str(val).strip():
                 _write_cell(tc, val)
             else:
                 # Cellule vide : on enlève la puce pour ne pas laisser un « • » orphelin.

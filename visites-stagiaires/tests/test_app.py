@@ -403,13 +403,18 @@ def test_horaires_du_deroulement():
 def test_preremplissage_references_et_horaires(monkeypatch):
     from app import analysis, llm
 
+    vu_prompt = []
+
     def fake(cfg, system, user, schema, timeout=0, **kw):
+        vu_prompt.append(user)
         assert "BIBLIOTHÈQUE DE RÉFÉRENCES" in user and "Photo 1 : Trace écrite" in user
         return {
             "enseignements": "Questionner le monde", "description": "Tri des animaux (photo 1).",
-            "deroulement": [{"temps": "10 min – Rappel", "deroulement": "a", "dispositif": "b", "organisation": "c"},
-                            {"temps": "25 min – Tri", "deroulement": "a", "dispositif": "b", "organisation": "c"}],
-            "points": [], "positifs": [], "ameliorer": [], "langue_observations": "",
+            "deroulement": [{"temps": "10 min – Rappel", "deroulement": "a", "remarque": "Tissage réussi", "dispositif": "b", "organisation": "c"},
+                            {"temps": "25 min – Tri", "deroulement": "a", "remarque": "", "dispositif": "b", "organisation": "c"}],
+            "points": [{"titre": "Étayage – Difficultés lors du tri", "analyse": "Constat, analyse, conseil.",
+                        "ressources": "J.-P. Astolfi, L'erreur, un outil pour enseigner, ESF, 1997 ; Manuel inventé, 2030"}],
+            "positifs": [], "ameliorer": [], "langue_observations": "",
             "references": ["La main à la pâte – Le vivant", "Ouvrage imaginaire de M. Personne"],
         }
 
@@ -423,6 +428,10 @@ def test_preremplissage_references_et_horaires(monkeypatch):
     assert refs["La main à la pâte – Le vivant"]["verifie"] is True
     assert refs["Ouvrage imaginaire de M. Personne"]["verifie"] is False
     assert len(res["points"]) == 3
+    assert res["deroulement"][0]["remarque"] == "Tissage réussi"
+    # Une référence de la bibliothèque intégrée passe, une référence inventée est signalée
+    assert res["points"][0]["ressources_a_verifier"] == ["Manuel inventé, 2030"]
+    assert "CADRE D'ANALYSE PROFESSIONNEL" in vu_prompt[0] and "Bucheton" in vu_prompt[0]
 
 
 def test_synthese_complete_et_photos_dans_bulletin(client):
@@ -451,3 +460,36 @@ def test_synthese_complete_et_photos_dans_bulletin(client):
     bul = docx.Document(str(edir / out["fichiers"][1]))
     assert len(bul.inline_shapes) == 3 + 2  # images du modèle + 2 photos sous la description
     assert "Photo 1" in _texte_docx(edir / out["fichiers"][1])
+
+
+
+def test_deroulement_observe_puis_conseil_dans_le_bulletin(tmp_path):
+    from app.bulletin import fill_bulletin
+    from tests.exemple import visite_exemple
+
+    v = visite_exemple()
+    v["bulletin"]["deroulement"] = [
+        {"temps": "14h25 – 14h35 (10 min)", "deroulement": "Calcul mental sur ardoise",
+         "remarque": "Pilotage efficace ; prévoir une validation collective.", "dispositif": "Collectif", "organisation": "Ardoises"},
+        {"temps": "14h35 – 14h55 (20 min)", "deroulement": "Recherche en binômes", "remarque": "",
+         "dispositif": "Binômes", "organisation": "Fiche"},
+    ]
+    d = docx.Document(str(fill_bulletin(v, tmp_path / "b.docx")))
+    t = next(t for t in d.tables if t.rows[0].cells[0].text.startswith("Temps"))
+    cellule = t.rows[1].cells[1]
+    assert [p.text for p in cellule.paragraphs] == [
+        "Observé : Calcul mental sur ardoise",
+        "Analyse et conseil : Pilotage efficace ; prévoir une validation collective.",
+    ]
+    assert cellule.paragraphs[0].runs[0].bold and cellule.paragraphs[1].runs[0].bold
+    assert t.rows[2].cells[1].text == "Recherche en binômes"  # sans remarque : l'observé seul
+
+
+def test_bibliotheque_integree_reconnue():
+    from app.analysis import verifier_references
+    from app.referentiel import REFERENCES_INTEGREES, bibliotheque_complete
+
+    biblio = bibliotheque_complete("Ma référence perso")
+    assert len(REFERENCES_INTEGREES) >= 20 and biblio.endswith("Ma référence perso")
+    res = verifier_references(["R. Goigoux et S. Cèbe, Apprendre à lire à l'école, Retz, 2006", "Ma référence perso"], biblio, "")
+    assert all(r["verifie"] and r["source"] == "bibliotheque" for r in res)

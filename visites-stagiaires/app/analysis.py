@@ -371,8 +371,10 @@ def analyse_reflexive(cfg: dict, visit: dict, grille: str, progress=lambda p, m=
     legendes = legendes_photos(visit)
     if legendes:
         notes = (notes + "\n" + legendes).strip()
+    from .referentiel import CADRE_ANALYSE
+
     contexte = (
-        f"GRILLE ET ATTENTES DE LA FORMATRICE :\n{grille}\n\n"
+        f"GRILLE ET ATTENTES DE LA FORMATRICE :\n{grille}\n\n{CADRE_ANALYSE}\n"
         + (f"DOCUMENTS DE LA STAGIAIRE (pour comprendre la séance, pas comme source de propos) :\n{docs[:6000]}\n\n" if docs else "")
         + (f"NOTES DE LA FORMATRICE (observation de la séance) :\n{notes}\n\n" if notes else "")
     )
@@ -467,7 +469,17 @@ SCHEMA_BULLETIN = {
     "properties": {
         "enseignements": {"type": "string"},
         "description": {"type": "string"},
-        "deroulement": SCHEMA_DOC["properties"]["deroulement"],
+        "deroulement": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "temps": {"type": "string"}, "deroulement": {"type": "string"}, "remarque": {"type": "string"},
+                    "dispositif": {"type": "string"}, "organisation": {"type": "string"},
+                },
+                "required": ["temps", "deroulement", "remarque", "dispositif", "organisation"],
+            },
+        },
         "points": {
             "type": "array",
             "items": {
@@ -582,6 +594,8 @@ def verifier_references(refs: list[str], bibliotheque: str, sources: str) -> lis
 
 def preremplir_bulletin(cfg: dict, visit: dict, grille: str, progress=lambda p, m="": None,
                         bibliotheque: str = "") -> dict:
+    from .referentiel import CADRE_ANALYSE, bibliotheque_complete
+
     adm = visit.get("admin", {})
     docs = resume_documents(visit.get("documents", []))
     photos = legendes_photos(visit)
@@ -590,18 +604,18 @@ def preremplir_bulletin(cfg: dict, visit: dict, grille: str, progress=lambda p, 
     trans = transcript_text(visit.get("transcription", {}).get("segments", []))
     if not (docs or notes or ana or trans):
         raise llm.IAIndisponible("Il n'y a encore aucune information pour préremplir le bulletin.")
-    biblio = (bibliotheque or "").strip()
-    reste = _budget_chars(cfg) - len(docs) - len(notes) - len(ana) - len(grille) - len(biblio) - 3500
+    biblio = bibliotheque_complete(bibliotheque)
+    reste = _budget_chars(cfg) - len(docs) - len(notes) - len(ana) - len(grille) - len(biblio) - len(CADRE_ANALYSE) - 4500
     extrait_trans = trans[: max(0, reste)] if reste > 2000 else ""
     user = (
-        f"GRILLE ET ATTENTES :\n{grille}\n\n"
+        f"GRILLE ET ATTENTES :\n{grille}\n\n{CADRE_ANALYSE}\n"
         f"CLASSE : {adm.get('classe', '')} – effectif {adm.get('effectif', '')} – horaire de la séance : "
         f"{adm.get('horaire', '') or 'non renseigné'}\n\n"
         + (f"DOCUMENTS DE LA STAGIAIRE :\n{docs}\n\n" if docs else "")
         + (f"NOTES DE LA FORMATRICE (dont les légendes des photos) :\n{notes}\n\n" if notes else "")
         + (f"ANALYSE DE L'ENTRETIEN (validée par la formatrice) :\n{ana}\n\n" if ana else "")
         + (f"TRANSCRIPTION (extrait) :\n{extrait_trans}\n\n" if extrait_trans else "")
-        + (f"BIBLIOTHÈQUE DE RÉFÉRENCES DE LA FORMATRICE :\n{biblio}\n\n" if biblio else "")
+        + f"BIBLIOTHÈQUE DE RÉFÉRENCES AUTORISÉES :\n{biblio}\n\n"
         + "Prépare les rubriques du bulletin officiel de visite :\n"
         "- enseignements : domaine ou discipline + objectif(s) de la séance observée (2 à 3 lignes).\n"
         "- description : description DÉTAILLÉE mais synthétique de la séance présentée (8 à 12 lignes) : "
@@ -609,36 +623,56 @@ def preremplir_bulletin(cfg: dict, visit: dict, grille: str, progress=lambda p, 
         "élèves (activités, productions, supports, manipulations), organisation (collectif, binômes, individuel), "
         "différenciation et rôle de l'enseignante. Quand une photo illustre une activité, renvoie-y entre "
         "parenthèses, par exemple « (photo 2) ».\n"
-        "- deroulement : les phases de la séance. Pour « temps », indique l'heure de début et de fin si elles "
-        "sont connues (notes de la formatrice, horaire de la séance) ET la durée, par exemple "
-        "« 14h25 – 14h35 (10 min) – Rituel » ; sinon la durée seule, par exemple « 10 min – Rituel ». "
-        "Puis déroulement, dispositif, organisation matérielle. Liste vide si aucune source ne décrit les phases.\n"
-        "- points : les 3 sujets LES PLUS DISCUTÉS pendant l'entretien. Pour chacun : titre court ; analyse = "
-        "éléments d'analyse ET conseils donnés (3 à 5 lignes) ; ressources = uniquement les supports ou ressources "
-        "réellement cités dans l'entretien ou les notes (sinon chaîne vide). Moins de 3 points si l'entretien "
-        "n'en aborde pas 3.\n"
+        "- deroulement : les phases de la séance, dans l'ordre. Pour chaque phase :\n"
+        "  · temps : heure de début et de fin si elles sont connues (notes de la formatrice, horaire de la séance) "
+        "ET durée, par exemple « 14h25 – 14h35 (10 min) – Rituel » ; sinon la durée seule « 10 min – Rituel » ;\n"
+        "  · deroulement : UNIQUEMENT ce qui a été OBSERVÉ pendant la phase (ce que fait l'enseignante, ce que font "
+        "les élèves), de façon factuelle, sans jugement ;\n"
+        "  · remarque : l'analyse ET le conseil de la formatrice (PEMF) sur cette phase, tirés de ses notes ou de "
+        "ses propos pendant l'entretien, en nommant la préoccupation concernée (pilotage, atmosphère, tissage, "
+        "étayage, objets de savoir). Chaîne vide si la formatrice n'a rien dit sur cette phase ;\n"
+        "  · dispositif ; organisation matérielle.\n"
+        "  Liste vide si aucune source ne décrit les phases.\n"
+        "- points : les 3 sujets LES PLUS DISCUTÉS pendant l'entretien, traités de façon pointue et professionnelle "
+        "avec le cadre d'analyse ci-dessus. Pour chacun :\n"
+        "  · titre : la préoccupation de Bucheton concernée puis le sujet précis, par exemple "
+        "« Étayage – Difficultés des élèves lors du tri des animaux » ;\n"
+        "  · analyse (5 à 8 lignes) : 1) constat précis (ce qui a été observé, à quel moment, chez quels élèves) ; "
+        "2) analyse avec le vocabulaire professionnel (gestes professionnels, posture d'étayage de l'enseignante, "
+        "postures des élèves, écart entre tâche prescrite et activité réelle des élèves) ; 3) conseil opérationnel "
+        "de la formatrice, réalisable dès la prochaine séance ;\n"
+        "  · ressources : 1 à 3 supports et ressources que la formatrice conseille sur ce point : ceux qu'elle a cités "
+        "pendant l'entretien et, s'ils correspondent au sujet, des références de la BIBLIOTHÈQUE AUTORISÉE, "
+        "recopiées exactement, séparées par « ; ». Aucune autre référence.\n"
+        "  Moins de 3 points si l'entretien n'en aborde pas 3.\n"
         "- positifs / ameliorer : avis sur la façon dont la stagiaire a conduit l'ENTRETIEN (réflexivité, écoute, "
         "argumentation, prise de recul), en phrases courtes. Listes vides si rien ne le permet.\n"
         "- langue_observations : observation sur la maîtrise de la langue UNIQUEMENT si les sources en parlent, "
         "sinon chaîne vide.\n"
-        "- references : les références à communiquer à la stagiaire à la fin de l'entretien (ouvrages, sites, "
-        "documents officiels, outils), UNIQUEMENT parmi celles citées dans l'entretien ou les notes, et celles de "
-        "la bibliothèque de la formatrice qui correspondent aux points discutés. Recopie-les telles quelles, "
-        "avec leur lien s'il est donné. N'en invente aucune.\n"
+        "- references : la liste récapitulative des références à communiquer à la stagiaire à la fin de "
+        "l'entretien : celles citées pendant l'entretien et celles retenues dans les points ci-dessus, recopiées "
+        "exactement. N'en invente aucune.\n"
         "N'écris jamais de note, de positionnement (TI, I, S, TS) ni d'appréciation chiffrée : c'est la formatrice "
-        "qui décide. N'invente rien.\n\nRéponds en JSON."
+        "qui décide. N'invente aucune observation.\n\nRéponds en JSON."
     )
-    res = llm.chat_json(cfg, SYSTEME, user, SCHEMA_BULLETIN, attendu=5000,
+    res = llm.chat_json(cfg, SYSTEME, user, SCHEMA_BULLETIN, attendu=6500,
                         progress=lambda f, m: progress(0.05 + 0.93 * f, m))
-    points = [
-        {"titre": str(p.get("titre", "")).strip(), "analyse": str(p.get("analyse", "")).strip(),
-         "ressources": str(p.get("ressources", "")).strip()}
-        for p in (res.get("points") or [])[:3] if isinstance(p, dict)
-    ]
+    sources = trans + "\n" + notes + "\n" + docs
+    points = []
+    for p in (res.get("points") or [])[:3]:
+        if not isinstance(p, dict):
+            continue
+        ressources = str(p.get("ressources", "")).strip()
+        verif = verifier_references([r for r in re.split(r"\s*;\s*|\n", ressources) if r.strip()], biblio, sources)
+        points.append({
+            "titre": str(p.get("titre", "")).strip(), "analyse": str(p.get("analyse", "")).strip(),
+            "ressources": ressources,
+            "ressources_a_verifier": [r["texte"] for r in verif if not r["verifie"]],
+        })
     while len(points) < 3:
-        points.append({"titre": "", "analyse": "", "ressources": ""})
+        points.append({"titre": "", "analyse": "", "ressources": "", "ressources_a_verifier": []})
     deroulement = [
-        {k: str(r.get(k, "")).strip() for k in ("temps", "deroulement", "dispositif", "organisation")}
+        {k: str(r.get(k, "")).strip() for k in ("temps", "deroulement", "remarque", "dispositif", "organisation")}
         for r in (res.get("deroulement") or []) if isinstance(r, dict)
     ]
     return {
@@ -649,5 +683,5 @@ def preremplir_bulletin(cfg: dict, visit: dict, grille: str, progress=lambda p, 
         "positifs": [str(x).strip() for x in res.get("positifs") or [] if str(x).strip()],
         "ameliorer": [str(x).strip() for x in res.get("ameliorer") or [] if str(x).strip()],
         "langue_observations": str(res.get("langue_observations", "")).strip(),
-        "references": verifier_references(res.get("references") or [], biblio, trans + "\n" + notes + "\n" + docs),
+        "references": verifier_references(res.get("references") or [], biblio, sources),
     }
